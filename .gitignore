@@ -1,0 +1,31 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.code-workspace
+
+# logs / local junk
+*.log
+npm-debug.log*
+.cache/
+tmp/
+temp/
+
+# secrets (never commit)
+.env
+.env.*
+!.env.example
+secrets.json
+*credentials*
+*token*
+
+# node (this extension is plain browser JS — no build)
+node_modules/
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
