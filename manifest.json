@@ -1,8 +1,8 @@
 {
   "display_name": "Omega Helper",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "author": "Zealllll",
-  "description": "Sync Gemini Omega Chat Completion feature toggles with their preset regex (no other extensions required).",
+  "description": "Sync Gemini Omega Chat Completion feature toggles with their preset regex. Tuned for Omega 3.0 EXP (19-7-26): 118 feature packs incl. engines, length, prose floor, perspective and language as pick-one radios.",
   "js": "index.js",
   "css": "style.css",
   "loading_order": 210,

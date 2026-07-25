@@ -391,6 +391,11 @@ body.oh-open #oh-quick-btn {
 .oh-badge.core { border-color: #f1948a55; color: #f5b7b1; }
 .oh-badge.miss { border-color: #8885; color: #bbb; }
 .oh-badge.partial { border-color: #f0c14b88; color: #f0c14b; }
+.oh-badge.radio { border-color: #7fd0ff55; color: #9adcff; }
+
+/* Radio families (engine / length / prose / view / language) */
+.oh-group.radio { border-left: 2px solid #7fd0ff55; }
+.oh-group.radio .oh-group-title small { color: #9adcff; }
 
 .oh-toggle {
   position: relative;

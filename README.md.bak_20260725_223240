@@ -2,10 +2,8 @@
 
 SillyTavern third-party extension that syncs **Chat Completion** feature prompts (JB/Omega OAI preset) with their **preset-embedded regex**.
 
-**Version:** 1.2.0 (see `manifest.json`)  
-**Author:** Zealllll  
-**Tuned for:** Gemini Omega 3.0 EXP (19-7-26) — 111 packs resolve, all 53 preset regex claimed  
-**Catalog:** 118 packs / 17 groups, also verified against 20-7, 30-7, 11-7 and 2.4 Extended
+**Version:** 1.1.1 (see `manifest.json`)  
+**Author:** Zealllll
 
 ## Design rules
 - Uses only SillyTavern core APIs:
@@ -18,25 +16,6 @@ SillyTavern third-party extension that syncs **Chat Completion** feature prompts
 One row = the JB prompt that teaches the model to emit a block **plus** the regex scripts that render/cut that block.
 
 Example: toggle **Lust Score** off → disables the Lust Score completion prompt *and* Lust Score regex/cut-off scripts together.
-
-Prompt-only packs (Core Logic, NSFW, Fun, Creator tools) show no `R` badge; regex-only packs (Intimacy, CoT cleanup) are tagged `regex only`.
-
-## Radio families (v1.2.0)
-Omega has several pick-one blocks. These groups behave like radio buttons — enabling one member disables its siblings, so you can't stack two engines or two languages:
-
-| Group | Members |
-|---|---|
-| Engine | Luna, Helios, Aphrodite, Pantheon, Director Cuts |
-| Length | Chatty, Short, Medium, Long, Extended, Dynamic |
-| Prose Floor | L1 Yappers, L2 Balanced, L3 Novel |
-| Perspective | Omniscient, 1st, 3rd, Spectators |
-| Language | ไทย, English, 日本語, Russian, Vietnam, Español, Mandarin, Portuguese BR |
-| Pacing | Slow-Burn, Fast-paced (Chat Mode is independent) |
-
-Radio groups hide the "enable whole group" button and are marked with a blue left edge plus a `1 of N` badge. Turn this off with **Radio mode** in the extension settings if you want to stack manually.
-
-## Groups in v1.2.0
-Engine · Romance/Lust · Status/Self · World/Clock · Trackers/Quest · UI Cards/Style · Length · Prose Floor · Perspective · Language · Pacing/Mode · Creator tools · Core Logic · Adultery (18+) · Fun/Misc · Cleanup/Safety
 
 ## Install (local folder)
 Copy / clone this repo into:
