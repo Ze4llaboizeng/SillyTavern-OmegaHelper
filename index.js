@@ -1,4 +1,4 @@
-/* Omega Helper v1.2.0 — Chat Completion feature packs ↔ preset regex (core ST APIs only) */
+/* Omega Helper v1.2.1 — preset-ordered Prompt manager + separate Regex controls */
 (() => {
     if (typeof window === 'undefined') { global.window = {}; }
     if (window.__OMEGA_HELPER_LOADED__) return;
@@ -7,7 +7,16 @@
     const MODULE_NAME = 'omegaHelper';
     const EXT_ID = 'omega-helper';
     const LOG = '[OmegaHelper]';
-    const VERSION = '1.2.0';
+    const VERSION = '1.2.1';
+
+    /** Update this block together with the extension whenever Omega ships a JB patch. */
+    const PATCH_NOTICE = {
+        id: 'gemini-omega-2.4.2-2026-06-07',
+        title: 'Gemini Omega 2.4.2',
+        version: '2.4.2',
+        fileName: 'Gemini Omega 2.4.2 (7-6-26).json',
+        sourceUrl: 'https://discord.com/channels/1325303011702079560/1455967291790331978/1512886868872659146',
+    };
 
     const DEFAULTS = {
         enabled: true,
@@ -15,7 +24,6 @@
         showWandButton: true,
         closeOnEscape: true,
         reloadChatAfterToggle: true,
-        syncMode: true, // prompt + regex together
         collapsedGroups: {},
         profiles: [],
         lastProfileId: null,
@@ -32,6 +40,15 @@
 
     /** Only these preset families use the planning block. Anything else: stay out. */
     const SUPPORTED_PRESET = /omega|5\s*ex|5ex/i;
+
+    /** Omega infrastructure prompts that must be enabled before every real generation. */
+    const REQUIRED_PROMPT_PATTERNS = [
+        /^sigil\s+(?:fence|clock|stage|facts)\s+cut\s*\(display\)$/i,
+        /^sigil\s+normalize\s+(?:clk|stg|fact)\s*\(prompt\)$/i,
+        /^sigil\s+trim\s+(?:clk|stg|fact)\s*\(prompt\)$/i,
+        /^sigil\s+auto[-\s]fence\s+wrap\s*\(prompt\)$/i,
+        /^sigil\s+(?:fence|clock|stage|facts)\s+cut[-\s]off\s*\(prompt\)$/i,
+    ];
 
     /**
      * Reasoning Formatting rules per model family.
@@ -63,274 +80,6 @@
         'button', 'input', 'label', 'select', 'option', 'section', 'header', 'footer', 'figure', 'svg',
         'path', 'video', 'audio', 'iframe', 'canvas', 'center', 'mark', 'del', 'ins', 'u', 's',
     ]);
-
-    /**
-     * Feature packs: keyword match against live Chat Completion prompts + regex names.
-     * No hard-coded UUIDs → survives Omega renames; no other extensions required.
-     */
-    const FEATURE_DEFS = [
-        {
-            id: 'lust',
-            title: 'Lust Score',
-            icon: 'fa-fire',
-            group: 'romance',
-            prompt: [/lust score/i],
-            regex: [/lust score/i],
-        },
-        {
-            id: 'romance_indicator',
-            title: 'Romance Indicator',
-            icon: 'fa-heart',
-            group: 'romance',
-            prompt: [/romance indicator/i],
-            regex: [/rom-indi|romance indicator/i],
-        },
-        {
-            id: 'intimacy',
-            title: 'Intimacy (regex pair)',
-            icon: 'fa-hand-holding-heart',
-            group: 'romance',
-            prompt: [/aphrodite|intimacy/i],
-            regex: [/\bintimacy\b/i],
-            // Aphrodite is broader; only pair intimacy regex by default
-            promptOptional: true,
-        },
-        {
-            id: 'user_status',
-            title: 'User Status Namecard',
-            icon: 'fa-id-card',
-            group: 'status',
-            prompt: [/user status namecard|user status/i],
-            regex: [/user status/i],
-        },
-        {
-            id: 'self_stage',
-            title: 'Self Stage / State of Char',
-            icon: 'fa-user',
-            group: 'status',
-            prompt: [/\(ui\)\s*state of char|state of char/i],
-            regex: [/self stage|self state/i],
-        },
-        {
-            id: 'world_stage',
-            title: 'World Stage / Nexus UI',
-            icon: 'fa-globe',
-            group: 'world',
-            prompt: [/nexus ui|aether \(world|world expansion/i],
-            regex: [/world state|world stage/i],
-        },
-        {
-            id: 'world_clock',
-            title: 'World Clock / Time Awareness',
-            icon: 'fa-clock',
-            group: 'world',
-            prompt: [/time awareness|tiny time tracker/i],
-            regex: [/world clock|tiny time tracker/i],
-        },
-        {
-            id: 'position',
-            title: 'Position Tracker',
-            icon: 'fa-location-dot',
-            group: 'trackers',
-            prompt: [/position tracker/i],
-            regex: [/position tracker/i],
-        },
-        {
-            id: 'npc_tracker',
-            title: 'NPCs Tracker',
-            icon: 'fa-people-group',
-            group: 'trackers',
-            prompt: [/npcs tracker/i],
-            regex: [/npcs tracker/i],
-        },
-        {
-            id: 'extreme_tracker',
-            title: 'Extreme Tracker',
-            icon: 'fa-person-running',
-            group: 'trackers',
-            prompt: [/extreme tracker/i],
-            regex: [/extreme tracker/i],
-        },
-        {
-            id: 'qte',
-            title: 'QTE',
-            icon: 'fa-bolt',
-            group: 'trackers',
-            prompt: [/\bqte\b|quick time event/i],
-            regex: [/quick time event|\bqte\b/i],
-        },
-        {
-            id: 'super_quest',
-            title: 'Super Quest',
-            icon: 'fa-coins',
-            group: 'trackers',
-            prompt: [/super quest/i],
-            regex: [/super quest/i],
-        },
-        {
-            id: 'ambient',
-            title: 'Ambient Scenes',
-            icon: 'fa-cloud',
-            group: 'trackers',
-            prompt: [/ambient scenes/i],
-            regex: [/ambient regex/i],
-        },
-        {
-            id: 'battle_log',
-            title: 'Battle Log',
-            icon: 'fa-calculator',
-            group: 'trackers',
-            prompt: [/battle log/i],
-            regex: [/battle log/i],
-        },
-        {
-            id: 'dnd',
-            title: 'DnD Roller',
-            icon: 'fa-dice',
-            group: 'trackers',
-            prompt: [/dnd roller/i],
-            regex: [/\bdnd\b/i],
-        },
-        {
-            id: 'daily_news',
-            title: 'Daily News',
-            icon: 'fa-newspaper',
-            group: 'trackers',
-            prompt: [/daily news|ai news ticker/i],
-            regex: [/daily news|ai intercept/i],
-        },
-        {
-            id: 'recall',
-            title: 'Recall',
-            icon: 'fa-mountain-sun',
-            group: 'trackers',
-            prompt: [/\brecall\b/i],
-            regex: [/\brecall\b/i],
-        },
-        {
-            id: 'next_scenario',
-            title: 'Next Scenario',
-            icon: 'fa-brain',
-            group: 'trackers',
-            prompt: [/next scenario/i],
-            regex: [/next scenario/i],
-        },
-        {
-            id: 'radio',
-            title: 'NPCs Radio',
-            icon: 'fa-radio',
-            group: 'ui',
-            prompt: [/npcs radio|radio frequency/i],
-            regex: [/radio regex/i],
-        },
-        {
-            id: 'phone',
-            title: 'Phone Indicator',
-            icon: 'fa-mobile-screen',
-            group: 'ui',
-            prompt: [/phone indicator/i],
-            regex: [/phone regex/i],
-        },
-        {
-            id: 'essential_banner',
-            title: 'Essential Banner',
-            icon: 'fa-panorama',
-            group: 'ui',
-            prompt: [/essential banner/i],
-            regex: [/essential banner/i],
-        },
-        {
-            id: 'quote_banner',
-            title: 'Quotation Banner',
-            icon: 'fa-quote-left',
-            group: 'ui',
-            prompt: [/quotation banner/i],
-            regex: [/quote banner/i],
-        },
-        {
-            id: 'name_tags',
-            title: 'Smol Name Tags',
-            icon: 'fa-tags',
-            group: 'ui',
-            prompt: [/smol name tags|name tags/i],
-            regex: [/name tag/i],
-        },
-        {
-            id: 'colorizer',
-            title: 'Dialogue Colorizer',
-            icon: 'fa-palette',
-            group: 'ui',
-            prompt: [/dialogue colorizer/i],
-            regex: [/color font|span style/i],
-        },
-        {
-            id: 'subtext',
-            title: 'Subtext Amplifier',
-            icon: 'fa-comment-dots',
-            group: 'ui',
-            prompt: [/subtext amplifier/i],
-            regex: [/subtext regex/i],
-        },
-        {
-            id: 'comment',
-            title: 'Comment Section',
-            icon: 'fa-comments',
-            group: 'ui',
-            prompt: [/comment section/i],
-            regex: [/comment section/i],
-        },
-        {
-            id: 'summary',
-            title: 'Small Summary',
-            icon: 'fa-file-lines',
-            group: 'ui',
-            prompt: [/small summary/i],
-            regex: [/summary regex/i],
-        },
-        {
-            id: 'visual_snapshot',
-            title: 'Visual Snapshot / Vision',
-            icon: 'fa-camera',
-            group: 'ui',
-            prompt: [/visual snapshot|visual react/i],
-            regex: [/vision weaver/i],
-        },
-        {
-            id: 'character_design',
-            title: 'Character Design / Bot Maker',
-            icon: 'fa-gamepad',
-            group: 'creator',
-            prompt: [/character design|first message maker|bot maker/i],
-            regex: [/bot maker|backup plan/i],
-        },
-        {
-            id: 'elevenlabs',
-            title: 'Elevenlabs TTS tags',
-            icon: 'fa-microphone',
-            group: 'cleanup',
-            prompt: [/elevenlabs/i],
-            regex: [/elevenlabs/i],
-        },
-        {
-            id: 'cleanup_core',
-            title: 'Thinking / CoT cleanup',
-            icon: 'fa-broom',
-            group: 'cleanup',
-            prompt: [], // regex-only safety net
-            regex: [/thinking cleanup|strip leaked|unclosed-cot|meta transition/i],
-        },
-    ];
-
-    const GROUP_META = {
-        romance: { title: 'Romance / Lust', icon: 'fa-heart', order: 10 },
-        status: { title: 'Status / Self', icon: 'fa-id-card', order: 20 },
-        world: { title: 'World / Clock', icon: 'fa-globe', order: 30 },
-        trackers: { title: 'Trackers / Quest', icon: 'fa-location-crosshairs', order: 40 },
-        ui: { title: 'UI Cards / Style', icon: 'fa-palette', order: 50 },
-        creator: { title: 'Creator tools', icon: 'fa-screwdriver-wrench', order: 60 },
-        cleanup: { title: 'Cleanup / Safety', icon: 'fa-broom', order: 70 },
-        other: { title: 'Other', icon: 'fa-ellipsis', order: 90 },
-    };
 
     const Core = {
         getContext() {
@@ -399,7 +148,7 @@
             const pm = await this.getManager();
             if (!pm) return { prompts: [], order: [], pm: null };
 
-            const prompts = (pm.serviceSettings?.prompts || []).map((p) => ({
+            const rawPrompts = (pm.serviceSettings?.prompts || []).map((p) => ({
                 identifier: p?.identifier,
                 name: p?.name || p?.identifier || '',
                 marker: !!p?.marker,
@@ -418,8 +167,24 @@
                 order = hit?.order || [];
             }
             const enabledMap = new Map((order || []).map((e) => [String(e.identifier), !!e.enabled]));
+            const promptMap = new Map(rawPrompts.map((p) => [String(p.identifier), p]));
+            const orderedPrompts = [];
+            const seen = new Set();
+            for (let orderIndex = 0; orderIndex < (order || []).length; orderIndex += 1) {
+                const entry = order[orderIndex];
+                const id = String(entry?.identifier ?? '');
+                const prompt = promptMap.get(id);
+                if (!prompt || seen.has(id)) continue;
+                seen.add(id);
+                orderedPrompts.push({ ...prompt, orderIndex });
+            }
+            for (const prompt of rawPrompts) {
+                const id = String(prompt.identifier);
+                if (seen.has(id)) continue;
+                orderedPrompts.push({ ...prompt, orderIndex: Number.MAX_SAFE_INTEGER });
+            }
             return {
-                prompts: prompts.map((p) => ({
+                prompts: orderedPrompts.map((p) => ({
                     ...p,
                     enabled: enabledMap.has(String(p.identifier)) ? enabledMap.get(String(p.identifier)) : false,
                     inOrder: enabledMap.has(String(p.identifier)),
@@ -428,7 +193,7 @@
                 pm,
             };
         },
-        async setEnabled(identifiers, enabled) {
+        async setEnabled(identifiers, enabled, { render = true } = {}) {
             const ids = [...new Set((identifiers || []).map(String).filter(Boolean))];
             if (!ids.length) return 0;
             const pm = await this.getManager();
@@ -468,14 +233,54 @@
                 changed += 1;
             }
 
-            try {
-                if (typeof pm.saveServiceSettings === 'function') await pm.saveServiceSettings();
-                else Core.saveSettings();
-            } catch (_) {
-                Core.saveSettings();
+            // Avoid disk writes and a full Prompt Manager render on the common
+            // every-turn path where all required prompts are already enabled.
+            if (changed > 0) {
+                try {
+                    if (typeof pm.saveServiceSettings === 'function') await pm.saveServiceSettings();
+                    else Core.saveSettings();
+                } catch (_) {
+                    Core.saveSettings();
+                }
+                if (render) {
+                    try { await pm.render?.(false); } catch (_) {}
+                }
             }
-            try { await pm.render?.(false); } catch (_) {}
             return changed;
+        },
+    };
+
+    const RequiredPrompts = {
+        matches(name) {
+            const value = String(name || '').trim().replace(/\s+/g, ' ');
+            return REQUIRED_PROMPT_PATTERNS.some((pattern) => pattern.test(value));
+        },
+
+        inspect(prompts) {
+            const required = (prompts || []).filter((prompt) => !prompt.marker && this.matches(prompt.name));
+            return {
+                required,
+                total: required.length,
+                on: required.filter((prompt) => prompt.enabled).length,
+                off: required.filter((prompt) => !prompt.enabled),
+            };
+        },
+
+        async enforce() {
+            const settings = Core.getSettings();
+            if (!settings.enabled) return { skipped: true, changed: 0, total: 0 };
+
+            const preset = await Prompts.getOaiName();
+            if (!SUPPORTED_PRESET.test(String(preset || ''))) {
+                return { skipped: true, changed: 0, total: 0, preset };
+            }
+
+            const { prompts } = await Prompts.listLive();
+            const state = this.inspect(prompts);
+            const changed = state.off.length
+                ? await Prompts.setEnabled(state.off.map((prompt) => prompt.identifier), true, { render: false })
+                : 0;
+            return { ...state, changed, preset };
         },
     };
 
@@ -589,10 +394,56 @@
     // Feature resolution
     // -----------------------------------------------------------------------
     const Features = {
-        anyMatch(name, patterns) {
-            if (!patterns?.length) return false;
-            const n = String(name || '');
-            return patterns.some((re) => re.test(n));
+        sectionTitle(name) {
+            const match = String(name || '').match(/\*\*\s*([^*]+?)\s*\*\*/);
+            return match?.[1]?.trim() || null;
+        },
+
+        isDivider(name) {
+            const value = String(name || '').replace(/\s+/g, '');
+            if (value.length < 6 || !/[─━—═⋅⋆☆★♱˚₊⁺‧୨୧]/u.test(value)) return false;
+            const meaningful = value.match(/[\p{L}\p{N}]/gu)?.length || 0;
+            const length = [...value].length;
+            // Ornament dividers may contain Tibetan glyphs that Unicode labels as
+            // letters. Their text-to-decoration ratio is still very low.
+            return meaningful <= 1 || meaningful / length <= 0.28;
+        },
+
+        assignPresetSections(prompts) {
+            let base = { id: 'preset-core', title: 'Preset หลัก' };
+            let section = { ...base, order: -1 };
+            let sectionOrder = 0;
+            let part = 1;
+            let dividerPending = false;
+            return (prompts || []).map((prompt) => {
+                const title = this.sectionTitle(prompt.name);
+                if (title) {
+                    base = { id: `preset:${String(prompt.identifier)}`, title };
+                    section = { ...base, order: sectionOrder };
+                    sectionOrder += 1;
+                    part = 1;
+                    dividerPending = false;
+                    return { ...prompt, section, sectionHeader: true, sectionDivider: false };
+                }
+
+                const divider = this.isDivider(prompt.name);
+                if (divider) {
+                    dividerPending = true;
+                    return { ...prompt, section, sectionHeader: false, sectionDivider: true };
+                }
+
+                if (dividerPending) {
+                    part += 1;
+                    section = {
+                        id: `${base.id}:part:${part}`,
+                        title: `${base.title} · ส่วน ${part}`,
+                        order: sectionOrder,
+                    };
+                    sectionOrder += 1;
+                    dividerPending = false;
+                }
+                return { ...prompt, section, sectionHeader: false, sectionDivider: false };
+            });
         },
 
         async resolve() {
@@ -601,103 +452,105 @@
                 Engine.listAll(),
             ]);
 
-            // Skip pure separators / empty markers for matching noise
-            const promptPool = prompts.filter((p) => p.name && !p.marker);
-            const packs = [];
-
-            for (const def of FEATURE_DEFS) {
-                const pHits = promptPool.filter((p) => this.anyMatch(p.name, def.prompt));
-                const rHits = regexAll.filter((e) => this.anyMatch(e.script.scriptName, def.regex));
-
-                if (!pHits.length && !rHits.length) continue;
-
-                const promptOn = pHits.filter((p) => p.enabled).length;
-                const regexOn = rHits.filter((e) => !e.script.disabled).length;
-                const totalBits = pHits.length + rHits.length;
-                const onBits = promptOn + regexOn;
-
-                let state = 'off';
-                if (totalBits && onBits === totalBits) state = 'on';
-                else if (onBits > 0) state = 'partial';
-
-                packs.push({
-                    def,
-                    prompts: pHits,
-                    regex: rHits,
-                    state,
-                    promptOn,
-                    regexOn,
-                    totalBits,
-                    onBits,
-                });
-            }
-
-            // Unmatched ★ prompts (optional discoverability)
-            const claimedP = new Set();
-            const claimedR = new Set();
-            for (const pack of packs) {
-                for (const p of pack.prompts) claimedP.add(p.identifier);
-                for (const r of pack.regex) claimedR.add(r.script.id);
-            }
-
-            const leftoverPrompts = promptPool.filter((p) =>
-                /[⭐✩]|\(⭐\)|\(ui\)/i.test(p.name) && !claimedP.has(p.identifier)
+            // Preserve the preset's own prompt_order and **section headers**.
+            // One real prompt = one row. No keyword merging or guessed P↔R pair.
+            const sectionedPrompts = this.assignPresetSections(prompts);
+            const promptPool = sectionedPrompts.filter((p) =>
+                p.name && p.inOrder && !p.marker && !p.sectionHeader && !p.sectionDivider
             );
-            const leftoverRegex = regexAll.filter((e) => !claimedR.has(e.script.id));
+            const packs = promptPool.map((prompt) => ({
+                def: {
+                    id: String(prompt.identifier),
+                    title: prompt.name,
+                    icon: 'fa-message',
+                },
+                prompts: [prompt],
+                regex: [],
+                state: prompt.enabled ? 'on' : 'off',
+                promptOn: prompt.enabled ? 1 : 0,
+                regexOn: 0,
+                totalBits: 1,
+                onBits: prompt.enabled ? 1 : 0,
+                controlledTotal: 1,
+                controlledOn: prompt.enabled ? 1 : 0,
+                controlsRegex: false,
+                mode: 'prompt',
+                section: prompt.section,
+                orderIndex: prompt.orderIndex,
+            }));
 
-            return { packs, leftoverPrompts, leftoverRegex, promptPool, regexAll };
+            return {
+                packs,
+                leftoverPrompts: [],
+                leftoverRegex: regexAll,
+                promptPool,
+                sectionedPrompts,
+                regexAll,
+            };
         },
 
         groupPacks(packs) {
             const map = new Map();
             for (const pack of packs) {
-                const gid = pack.def.group || 'other';
+                const gid = pack.section.id;
                 if (!map.has(gid)) {
-                    const meta = GROUP_META[gid] || GROUP_META.other;
+                    const meta = {
+                        title: pack.section.title,
+                        icon: 'fa-layer-group',
+                        order: pack.section.order,
+                    };
                     map.set(gid, { id: gid, meta, items: [] });
                 }
                 map.get(gid).items.push(pack);
             }
-            return [...map.values()].sort((a, b) => (a.meta.order || 99) - (b.meta.order || 99));
+            for (const group of map.values()) {
+                group.items.sort((a, b) => a.orderIndex - b.orderIndex);
+            }
+            return [...map.values()].sort((a, b) => a.meta.order - b.meta.order);
         },
 
-        async setPack(pack, enabled, { reload = true, quiet = false } = {}) {
-            const pIds = pack.prompts.map((p) => p.identifier);
-            const rIds = pack.regex.map((e) => e.script.id);
-            const st = Core.getSettings();
+        async setPacks(packs, enabled, { reload = true, quiet = false, label = '' } = {}) {
+            const list = packs || [];
+            const pIds = [...new Set(list.flatMap((pack) => pack.prompts.map((p) => p.identifier)))];
 
             let pChanged = 0;
-            let rChanged = 0;
-            if (pIds.length) pChanged = await Prompts.setEnabled(pIds, enabled);
-            if (rIds.length && st.syncMode !== false) rChanged = await Engine.setEnabled(rIds, enabled);
-            else if (rIds.length && st.syncMode === false && !pIds.length) {
-                // regex-only pack
-                rChanged = await Engine.setEnabled(rIds, enabled);
+            if (pIds.length) pChanged = await Prompts.setEnabled(pIds, enabled, { render: false });
+
+            // Keep the current view-model authoritative without fetching and
+            // rebuilding the whole panel after every tap.
+            for (const pack of list) {
+                for (const prompt of pack.prompts) prompt.enabled = !!enabled;
+                pack.promptOn = pack.prompts.filter((p) => p.enabled).length;
+                pack.controlledOn = pack.promptOn;
+                pack.controlledTotal = pack.prompts.length;
+                pack.state = pack.controlledOn === 0 ? 'off'
+                    : (pack.controlledOn === pack.controlledTotal ? 'on' : 'partial');
             }
 
             if (!quiet) {
                 Core.toast(
                     'success',
-                    `${enabled ? 'เปิด' : 'ปิด'} ${pack.def.title} · prompt ${pChanged} · regex ${rChanged}`,
+                    `${enabled ? 'เปิด' : 'ปิด'} ${label || 'Prompt'} · เปลี่ยน ${pChanged}`,
                 );
             }
             if (reload) await Engine.reloadChatIfNeeded();
-            return { pChanged, rChanged };
+            return { pChanged, rChanged: 0 };
+        },
+
+        async setPack(pack, enabled, options = {}) {
+            return this.setPacks([pack], enabled, { ...options, label: pack.def.title });
         },
 
         async setGroup(groupId, enabled) {
             const { packs } = await this.resolve();
-            const subset = packs.filter((p) => p.def.group === groupId);
+            const subset = packs.filter((p) => p.section.id === groupId);
             if (!subset.length) throw new Error(`ไม่พบกลุ่ม ${groupId}`);
-            let p = 0; let r = 0;
-            for (const pack of subset) {
-                const res = await this.setPack(pack, enabled, { reload: false, quiet: true });
-                p += res.pChanged;
-                r += res.rChanged;
-            }
-            await Engine.reloadChatIfNeeded();
-            Core.toast('success', `${enabled ? 'เปิด' : 'ปิด'}กลุ่ม · prompt ${p} · regex ${r}`);
-            return { p, r };
+            const result = await this.setPacks(subset, enabled, {
+                reload: false,
+                quiet: false,
+                label: `ทั้งหมวด ${subset[0]?.section?.title || groupId}`,
+            });
+            return { p: result.pChanged, r: result.rChanged };
         },
 
         async setByName(query, enabled) {
@@ -946,6 +799,91 @@
             } else {
                 this.host?.replaceChildren();
                 this.shown.clear();
+            }
+        },
+    };
+
+    const PatchNotice = {
+        parseVersion(value) {
+            const match = String(value || '').match(/(?:^|[^\d])v?(\d+)\.(\d+)(?:\.(\d+))?/i);
+            return match ? [Number(match[1]), Number(match[2]), Number(match[3] || 0)] : null;
+        },
+
+        compare(a, b) {
+            for (let i = 0; i < 3; i += 1) {
+                const delta = (a?.[i] || 0) - (b?.[i] || 0);
+                if (delta) return Math.sign(delta);
+            }
+            return 0;
+        },
+
+        show({ level, title, body, primary = false }) {
+            return Alerts.show({
+                key: 'patch-status',
+                level,
+                cooldown: 0,
+                ttl: 0,
+                title,
+                body,
+                actions: [{
+                    label: 'ดูต้นโพสต์ Discord',
+                    icon: 'fa-arrow-up-right-from-square',
+                    primary,
+                    run: () => window.open(PATCH_NOTICE.sourceUrl, '_blank', 'noopener,noreferrer'),
+                }],
+            });
+        },
+
+        async check() {
+            if (!PATCH_NOTICE?.id || !PATCH_NOTICE?.version || !PATCH_NOTICE?.sourceUrl) return null;
+            try {
+                const preset = await Prompts.getOaiName();
+                const current = this.parseVersion(preset);
+                const latest = this.parseVersion(PATCH_NOTICE.version);
+                const isOmega = /omega/i.test(String(preset || ''));
+                const commonBody = `กำลังใช้: ${preset || 'ไม่ทราบชื่อ'}\nOmega ล่าสุด: ${PATCH_NOTICE.fileName}`;
+
+                if (!current || !latest) {
+                    return this.show({
+                        level: 'info',
+                        title: `มีประกาศแพตช์: ${PATCH_NOTICE.title}`,
+                        body: `${commonBody}\nอ่านเลขเวอร์ชันจากชื่อ preset ปัจจุบันไม่ได้`,
+                    });
+                }
+
+                const relation = this.compare(current, latest);
+                if (isOmega && relation < 0) {
+                    return this.show({
+                        level: 'warn', primary: true,
+                        title: `Omega ที่ใช้อยู่เก่ากว่า ${PATCH_NOTICE.version}`,
+                        body: `${commonBody}\nควรดาวน์โหลดแพตช์ใหม่แล้วเปิดแชตใหม่`,
+                    });
+                }
+                if (isOmega && relation === 0) {
+                    return this.show({
+                        level: 'ok',
+                        title: `Omega ${PATCH_NOTICE.version} เป็นเวอร์ชันล่าสุดแล้ว`,
+                        body: commonBody,
+                    });
+                }
+                if (isOmega && relation > 0) {
+                    return this.show({
+                        level: 'info',
+                        title: 'Omega ที่ใช้อยู่ใหม่กว่าประกาศล่าสุด',
+                        body: `${commonBody}\nยังไม่ต้องย้อนกลับไปใช้เวอร์ชันเก่า`,
+                    });
+                }
+
+                const relationText = relation > 0 ? 'ใหม่กว่า' : (relation < 0 ? 'เก่ากว่า' : 'เท่ากับ');
+                return this.show({
+                    level: relation < 0 ? 'warn' : 'info',
+                    title: `JB ปัจจุบัน ${relationText} Omega ${PATCH_NOTICE.version}`,
+                    body: `${commonBody}\nเปรียบเทียบจากเลขเวอร์ชันในชื่อ preset`,
+                    primary: relation < 0,
+                });
+            } catch (err) {
+                console.warn(LOG, 'ตรวจเวอร์ชัน JB/Omega ไม่สำเร็จ', err);
+                return null;
             }
         },
     };
@@ -1301,8 +1239,8 @@
                     </div>
                     <div id="oh-panel-body">
                         <div class="oh-tabs" role="tablist">
-                            <div class="oh-tab active" data-tab="features" role="tab" title="ฟีเจอร์ JB + Regex">ฟีเจอร์ (JB+Regex)</div>
-                            <div class="oh-tab" data-tab="regex" role="tab" title="Regex ล้วน">Regex ล้วน</div>
+                            <div class="oh-tab active" data-tab="features" role="tab" title="Prompt ตามหมวดใน preset">Prompt</div>
+                            <div class="oh-tab" data-tab="regex" role="tab" title="Regex ของ preset/global/scoped">Regex</div>
                         </div>
                         <div class="oh-toolbar">
                             <label class="oh-search-box" for="oh-search">
@@ -1421,7 +1359,9 @@
                 await Doctor.audit({ quiet: false, cooldown: 0 });
                 await this.refreshDoctorLine();
             });
-            overlay.querySelector('#oh-open-pm')?.addEventListener('click', () => {
+            overlay.querySelector('#oh-open-pm')?.addEventListener('click', async () => {
+                try { await (await Prompts.getManager())?.render?.(false); } catch (_) {}
+                this.close();
                 try {
                     document.getElementById('leftNavDrawerIcon')?.click?.();
                 } catch (_) {}
@@ -1475,22 +1415,31 @@
                 const resolved = await Features.resolve();
                 const allow = await Engine.isPresetAllowed();
                 const oai = await Prompts.getOaiName();
-                this.cache = { ...resolved, allow, oai };
+                const required = RequiredPrompts.inspect(resolved.promptPool);
+                this.cache = { ...resolved, allow, oai, required };
 
                 const onFeats = resolved.packs.filter((p) => p.state === 'on').length;
                 const partial = resolved.packs.filter((p) => p.state === 'partial').length;
                 const parts = [
                     `${resolved.packs.length} ฟีเจอร์`,
                     `${onFeats} เปิด`,
-                    partial ? `${partial} ครึ่ง` : null,
+                    partial ? `${partial} รายการรอเปิดให้ครบ` : null,
+                    required.total ? `Sigil ${required.on}/${required.total}` : null,
                     oai || null,
                     `${resolved.regexAll.length} regex`,
                 ].filter(Boolean);
 
                 if (status) {
-                    if (resolved.regexAll.some((e) => e.typeName === 'preset') && !allow.allowed) {
+                    if ((required.off.length > 0 && SUPPORTED_PRESET.test(String(oai || '')))
+                        || (resolved.regexAll.some((e) => e.typeName === 'preset') && !allow.allowed)) {
                         status.className = 'oh-status warn';
-                        status.textContent = `${parts.join(' · ')} — ยังไม่ allow preset regex`;
+                        const warnings = [
+                            required.off.length ? `Sigil core ปิดอยู่ ${required.off.length}` : null,
+                            resolved.regexAll.some((e) => e.typeName === 'preset') && !allow.allowed
+                                ? 'ยังไม่ allow preset regex'
+                                : null,
+                        ].filter(Boolean);
+                        status.textContent = `${parts.join(' · ')} — ${warnings.join(' · ')}`;
                     } else {
                         status.className = 'oh-status ok';
                         status.textContent = parts.join(' · ');
@@ -1546,6 +1495,47 @@
             else this.renderFeatures(host);
         },
 
+        packSubHtml(pack) {
+            const order = Number.isFinite(pack.orderIndex) ? `ลำดับ ${pack.orderIndex + 1}` : 'Prompt';
+            return `<span class="oh-badge prompt">Prompt</span> · ${order}`;
+        },
+
+        syncPackRow(row, pack) {
+            row.className = `oh-row is-${pack.state}`;
+            const sub = row.querySelector('.oh-sub');
+            if (sub) sub.innerHTML = this.packSubHtml(pack);
+            const wrap = row.querySelector('.oh-toggle-wrap');
+            const lab = row.querySelector('.oh-toggle');
+            const input = row.querySelector('.oh-toggle input');
+            const text = row.querySelector('.oh-toggle-text');
+            const modeLabel = 'Prompt นี้';
+            wrap?.classList.remove('is-on', 'is-off', 'is-partial');
+            wrap?.classList.add(`is-${pack.state}`);
+            lab?.classList.remove('is-on', 'is-off', 'is-partial', 'busy');
+            lab?.classList.add(`is-${pack.state}`);
+            if (lab) {
+                lab.title = pack.state === 'partial'
+                    ? `เปิด ${modeLabel} ที่เหลือให้ครบ`
+                    : `${pack.state === 'on' ? 'ปิด' : 'เปิด'} ${modeLabel}`;
+                lab.setAttribute('aria-label', lab.title);
+            }
+            if (input) {
+                input.checked = pack.state === 'on';
+                input.indeterminate = pack.state === 'partial';
+                input.disabled = false;
+            }
+            if (text) {
+                text.textContent = pack.state === 'partial' ? 'เปิดให้ครบ'
+                    : (pack.state === 'on' ? 'เปิด' : 'ปิด');
+            }
+        },
+
+        updateFeatureMeta() {
+            const packs = this.cache?.packs || [];
+            const meta = this.root?.querySelector('#oh-header-meta');
+            if (meta) meta.textContent = `${packs.filter((pack) => pack.state === 'on').length}/${packs.length}`;
+        },
+
         renderFeatures(host) {
             const q = (this.search || '').trim().toLowerCase();
             const groups = Features.groupPacks(this.cache.packs || []);
@@ -1582,7 +1572,7 @@
                 head.innerHTML = `
                     <div class="oh-group-title">
                         <b><i class="fa-solid ${Core.escape(g.meta.icon)}"></i> ${Core.escape(g.meta.title)}</b>
-                        <small>${onCount}/${items.length} เปิดเต็ม · sync prompt+regex</small>
+                        <small>${onCount}/${items.length} เปิด · ตามลำดับใน preset</small>
                     </div>
                     <div class="oh-group-actions">
                         <div class="menu_button menu_button_icon oh-g-on" title="เปิดทั้งกลุ่ม"><i class="fa-solid fa-toggle-on"></i></div>
@@ -1594,14 +1584,16 @@
                     e.stopPropagation();
                     try {
                         await Features.setGroup(g.id, true);
-                        await this.refresh();
+                        this.renderFeatures(host);
+                        this.updateFeatureMeta();
                     } catch (err) { Core.toast('error', err?.message || String(err)); }
                 });
                 head.querySelector('.oh-g-off')?.addEventListener('click', async (e) => {
                     e.stopPropagation();
                     try {
                         await Features.setGroup(g.id, false);
-                        await this.refresh();
+                        this.renderFeatures(host);
+                        this.updateFeatureMeta();
                     } catch (err) { Core.toast('error', err?.message || String(err)); }
                 });
                 const fold = () => {
@@ -1623,27 +1615,27 @@
                     const row = document.createElement('div');
                     row.className = `oh-row is-${pack.state}`;
 
-                    const badges = [];
-                    badges.push(`<span class="oh-badge prompt">P ${pack.promptOn}/${pack.prompts.length}</span>`);
-                    badges.push(`<span class="oh-badge regex">R ${pack.regexOn}/${pack.regex.length}</span>`);
-                    if (pack.state === 'partial') badges.push('<span class="oh-badge partial">partial</span>');
-                    if (!pack.prompts.length) badges.push('<span class="oh-badge miss">no prompt</span>');
-                    if (!pack.regex.length) badges.push('<span class="oh-badge miss">no regex</span>');
-
                     const nameBox = document.createElement('div');
                     nameBox.className = 'oh-name';
-                    const detail = [
-                        ...pack.prompts.map((p) => p.name),
-                        ...pack.regex.map((e) => e.script.scriptName),
-                    ].slice(0, 4).join(' · ');
                     nameBox.innerHTML = `
                         <span class="oh-main">${Core.escape(pack.def.title)}</span>
-                        <span class="oh-sub">${badges.join(' ')} · ${Core.escape(detail)}</span>
+                        <span class="oh-sub">${this.packSubHtml(pack)}</span>
                     `;
+
+                    const toggleWrap = document.createElement('div');
+                    toggleWrap.className = `oh-toggle-wrap is-${pack.state}`;
+                    const stateText = document.createElement('span');
+                    stateText.className = 'oh-toggle-text';
+                    stateText.textContent = pack.state === 'partial' ? 'เปิดให้ครบ'
+                        : (pack.state === 'on' ? 'เปิด' : 'ปิด');
 
                     const lab = document.createElement('label');
                     lab.className = `oh-toggle is-${pack.state}`;
-                    lab.title = pack.state === 'on' ? 'เปิดครบ — คลิกเพื่อปิดทั้งคู่' : 'คลิกเพื่อเปิด prompt+regex';
+                    const modeLabel = 'Prompt นี้';
+                    lab.title = pack.state === 'partial'
+                        ? `เปิด ${modeLabel} ที่เหลือให้ครบ`
+                        : `${pack.state === 'on' ? 'ปิด' : 'เปิด'} ${modeLabel}`;
+                    lab.setAttribute('aria-label', lab.title);
                     const input = document.createElement('input');
                     input.type = 'checkbox';
                     input.checked = pack.state === 'on';
@@ -1652,21 +1644,45 @@
                     slider.className = 'oh-slider';
                     lab.appendChild(input);
                     lab.appendChild(slider);
+                    toggleWrap.appendChild(lab);
+                    toggleWrap.appendChild(stateText);
+                    stateText.addEventListener('click', () => { if (!input.disabled) input.click(); });
 
                     input.addEventListener('change', async () => {
+                        // Mixed state is always a one-tap "complete setup" action.
+                        const nextEnabled = pack.state === 'partial' ? true : !!input.checked;
+                        input.checked = nextEnabled;
+                        input.indeterminate = false;
                         input.disabled = true;
                         lab.classList.add('busy');
                         // optimistic: state class follows the click before refresh lands
                         lab.classList.remove('is-on', 'is-off', 'is-partial');
-                        lab.classList.add(input.checked ? 'is-on' : 'is-off');
+                        lab.classList.add(nextEnabled ? 'is-on' : 'is-off');
+                        toggleWrap.classList.remove('is-on', 'is-off', 'is-partial');
+                        toggleWrap.classList.add(nextEnabled ? 'is-on' : 'is-off');
+                        row.classList.remove('is-on', 'is-off', 'is-partial');
+                        row.classList.add(nextEnabled ? 'is-on' : 'is-off');
+                        stateText.textContent = nextEnabled ? 'เปิด' : 'ปิด';
                         try {
-                            // partial → full on when user checks
-                            await Features.setPack(pack, !!input.checked, { reload: true, quiet: false });
-                            await this.refresh();
+                            await Features.setPack(pack, nextEnabled, { reload: false, quiet: false });
+                            this.syncPackRow(row, pack);
+                            const onNow = items.filter((item) => item.state === 'on').length;
+                            const groupSummary = head.querySelector('.oh-group-title small');
+                            if (groupSummary) {
+                                groupSummary.textContent = `${onNow}/${items.length} เปิด · ตามลำดับใน preset`;
+                            }
+                            this.updateFeatureMeta();
                         } catch (err) {
-                            input.checked = !input.checked;
+                            input.checked = pack.state === 'on';
+                            input.indeterminate = pack.state === 'partial';
                             lab.classList.remove('is-on', 'is-off');
                             lab.classList.add(`is-${pack.state}`);
+                            toggleWrap.classList.remove('is-on', 'is-off', 'is-partial');
+                            toggleWrap.classList.add(`is-${pack.state}`);
+                            row.classList.remove('is-on', 'is-off', 'is-partial');
+                            row.classList.add(`is-${pack.state}`);
+                            stateText.textContent = pack.state === 'partial' ? 'เปิดให้ครบ'
+                                : (pack.state === 'on' ? 'เปิด' : 'ปิด');
                             Core.toast('error', err?.message || String(err));
                         } finally {
                             input.disabled = false;
@@ -1675,7 +1691,7 @@
                     });
 
                     row.appendChild(nameBox);
-                    row.appendChild(lab);
+                    row.appendChild(toggleWrap);
                     body.appendChild(row);
                 }
 
@@ -1729,15 +1745,22 @@
                     lab.classList.add('busy');
                     lab.classList.remove('is-on', 'is-off');
                     lab.classList.add(input.checked ? 'is-on' : 'is-off');
+                    row.classList.remove('is-on', 'is-off');
+                    row.classList.add(input.checked ? 'is-on' : 'is-off');
                     try {
                         await Engine.setEnabled([e.script.id], !!input.checked);
                         await Engine.reloadChatIfNeeded();
                         Core.toast('success', `${input.checked ? 'เปิด' : 'ปิด'}: ${e.script.scriptName}`);
-                        await this.refresh();
+                        e.script.disabled = !input.checked;
+                        row.className = `oh-row is-${input.checked ? 'on' : 'off'}`;
+                        lab.classList.remove('is-on', 'is-off');
+                        lab.classList.add(input.checked ? 'is-on' : 'is-off');
                     } catch (err) {
                         input.checked = !input.checked;
                         lab.classList.remove('is-on', 'is-off');
                         lab.classList.add(`is-${on ? 'on' : 'off'}`);
+                        row.classList.remove('is-on', 'is-off');
+                        row.classList.add(`is-${on ? 'on' : 'off'}`);
                         Core.toast('error', err?.message || String(err));
                     } finally {
                         input.disabled = false;
@@ -1778,10 +1801,6 @@
                         <label class="checkbox_label" for="oh-enabled">
                             <input type="checkbox" id="oh-enabled" ${st.enabled ? 'checked' : ''} />
                             <span>Enable Omega Helper</span>
-                        </label>
-                        <label class="checkbox_label" for="oh-sync">
-                            <input type="checkbox" id="oh-sync" ${st.syncMode !== false ? 'checked' : ''} />
-                            <span>Sync ฟีเจอร์ = เปิด/ปิด Chat Completion prompt + regex คู่กัน</span>
                         </label>
                         <label class="checkbox_label" for="oh-quick">
                             <input type="checkbox" id="oh-quick" ${st.showQuickButton ? 'checked' : ''} />
@@ -1853,7 +1872,6 @@
                 this.syncQuickButton(s);
                 this.syncWandButton(s);
             });
-            bind('oh-sync', 'syncMode');
             bind('oh-quick', 'showQuickButton', (s) => this.syncQuickButton(s));
             bind('oh-wand', 'showWandButton', (s) => this.syncWandButton(s));
             bind('oh-reload', 'reloadChatAfterToggle');
@@ -1879,7 +1897,7 @@
             if (!$('#send_form').length) return;
 
             const wrapper = $(`
-                <div id="oh-quick-btn-wrapper" title="Omega Helper — ฟีเจอร์ JB + regex">
+                <div id="oh-quick-btn-wrapper" title="Omega Helper — Prompt + Regex manager">
                     <div id="oh-quick-btn" role="button" tabindex="0" aria-label="Omega Helper">
                         <i class="fa-solid fa-bolt"></i>
                     </div>
@@ -1996,7 +2014,7 @@
                     const title = await Features.setByName(name, enabled);
                     return `${enabled ? 'on' : 'off'}:${title}`;
                 },
-                helpString: 'Toggle feature pack (prompt+regex). /oh-feat Lust off',
+                helpString: 'Toggle a preset prompt by its real name. /oh-feat Lust Score off',
             });
             add({
                 name: 'oh-check',
@@ -2065,9 +2083,29 @@
                 Panel.refreshDoctorLine();
             }));
         }
+        if (et.OAI_PRESET_CHANGED_AFTER) {
+            es.on(et.OAI_PRESET_CHANGED_AFTER, async () => {
+                await PatchNotice.check();
+                if (Panel.isOpen) await Panel.refresh();
+            });
+        }
         if (et.GENERATION_STARTED) {
-            es.on(et.GENERATION_STARTED, (_type, _opts, dryRun) => {
+            es.on(et.GENERATION_STARTED, async (_type, _opts, dryRun) => {
                 if (dryRun) return;
+                try {
+                    const result = await RequiredPrompts.enforce();
+                    if (result.changed > 0) {
+                        console.info(LOG, `เปิด Sigil core ก่อน generate: ${result.changed}/${result.total}`);
+                        if (Panel.isOpen) await Panel.refresh();
+                    }
+                } catch (err) {
+                    console.warn(LOG, 'เปิด Sigil core ไม่สำเร็จ', err);
+                    Alerts.show({
+                        key: 'required-prompts', level: 'warn', ttl: 0, cooldown: 30000,
+                        title: 'เปิด Sigil core ก่อน generate ไม่สำเร็จ',
+                        body: err?.message || String(err),
+                    });
+                }
                 later('doctor', 0, () => Doctor.audit({ quiet: true }));
             });
         }
@@ -2076,11 +2114,14 @@
     }
 
     function boot() {
+        if (boot.done || !window.SillyTavern?.getContext) return;
+        boot.done = true;
         UI.injectSettings();
         UI.injectQuickButton();
         UI.injectWandButton();
         registerSlash();
         registerWatchers();
+        PatchNotice.check();
 
         let tries = 0;
         const timer = setInterval(() => {
@@ -2101,7 +2142,7 @@
             mo.observe(observeTarget, { childList: true, subtree: true });
         } catch (_) {}
 
-        console.log(LOG, `loaded v${VERSION} — feature packs ↔ Chat Completion + regex`);
+        console.log(LOG, `loaded v${VERSION} — preset Prompt order + separate Regex controls`);
     }
 
     function onReady() {

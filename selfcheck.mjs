@@ -63,6 +63,28 @@ for (const cls of ['oh-row', 'oh-toggle', 'oh-slider', 'oh-badge', 'oh-alert', '
 ok('alert setting id does not collide with popup host',
     raw.includes('id="oh-alerts-enabled"') && !/<input[^>]+id="oh-alerts"/.test(raw));
 ok('search rendering is debounced', /_searchTimer\s*=\s*setTimeout\([\s\S]*?this\.render\(\);[\s\S]*?140\);/.test(raw));
+ok('generation waits for required Sigil prompts',
+    /GENERATION_STARTED[\s\S]*async \(_type, _opts, dryRun\)[\s\S]*await RequiredPrompts\.enforce\(\)/.test(raw));
+ok('group changes are batched', /async setGroup[\s\S]*this\.setPacks\(subset, enabled/.test(raw));
+ok('current Omega patch notice is bundled',
+    raw.includes("id: 'gemini-omega-2.4.2-2026-06-07'")
+    && raw.includes('1512886868872659146'));
+ok('patch version is checked once during boot', /function boot\(\)[\s\S]*boot\.done[\s\S]*PatchNotice\.check\(\)/.test(raw));
+ok('patch version rechecks after preset change', /OAI_PRESET_CHANGED_AFTER[\s\S]*await PatchNotice\.check\(\)/.test(raw));
+ok('mixed state uses an actionable Thai label',
+    raw.includes("pack.state === 'partial' ? 'เปิดให้ครบ'") && !raw.includes('>เปิดบางส่วน<'));
+ok('mixed switch deterministically completes the feature',
+    /nextEnabled\s*=\s*pack\.state === 'partial' \? true/.test(raw));
+ok('feature categories come from preset section headers',
+    raw.includes('assignPresetSections') && raw.includes('sectionTitle(prompt.name)') && !raw.includes('GROUP_META'));
+ok('decorative divider lines split preset groups',
+    raw.includes('isDivider(prompt.name)') && raw.includes('sectionDivider: true'));
+ok('prompt list preserves prompt_order', raw.includes('orderedPrompts.push({ ...prompt, orderIndex })'));
+ok('single feature toggle does not full-refresh the panel',
+    /await Features\.setPack\([\s\S]*?this\.syncPackRow\(row, pack\)/.test(raw));
+ok('prompt rows are not merged by feature keywords',
+    raw.includes('One real prompt = one row') && !/for \(const def of FEATURE_DEFS\)/.test(raw));
+ok('prompt and regex controls are separate', !raw.includes('id="oh-sync-mode"'));
 
 // ============================== RUNTIME ==============================
 const noop = () => {};
@@ -74,6 +96,33 @@ const power_user = {
 };
 let model = 'gemini-3.5-flash';
 let presetName = 'Gemini Omega 4.2';
+const requiredPromptNames = [
+    'Sigil Fence Cut (Display)', 'Sigil Clock Cut (Display)', 'Sigil Stage Cut (Display)',
+    'Sigil Facts Cut (Display)', 'Sigil Normalize CLK (Prompt)', 'Sigil Normalize STG (Prompt)',
+    'Sigil Normalize FACT (Prompt)', 'Sigil Trim CLK (Prompt)', 'Sigil Trim STG (Prompt)',
+    'Sigil Trim FACT (Prompt)', 'Sigil Auto-Fence Wrap (Prompt)', 'Sigil Fence Cut-off (Prompt)',
+    'Sigil Clock Cut-off (Prompt)', 'Sigil Stage Cut-off (Prompt)', 'Sigil Facts Cut-off (Prompt)',
+];
+globalThis.__PROMPTS__ = [
+    ...requiredPromptNames.map((name, i) => ({ identifier: `sigil-${i}`, name })),
+    { identifier: 'heading-format', name: '👇| **Format** (รูปแบบ) ↴' },
+    { identifier: 'feature-aether', name: 'Aether (World Expansion)' },
+    { identifier: 'divider-format', name: '─── ⋆⋅☆⋅⋆ ───── ⋆⋅☆⋅⋆ ──── 4' },
+    { identifier: 'feature-nexus', name: '(UI) Nexus UI' },
+    { identifier: 'feature-lust', name: 'Lust Score' },
+];
+globalThis.__ORDER__ = [
+    ...requiredPromptNames.map((_, i) => ({ identifier: `sigil-${i}`, enabled: false })),
+    { identifier: 'heading-format', enabled: true },
+    { identifier: 'feature-aether', enabled: true },
+    { identifier: 'divider-format', enabled: true },
+    { identifier: 'feature-nexus', enabled: false },
+    { identifier: 'feature-lust', enabled: true },
+];
+globalThis.__REGEX__ = [{ id: 'regex-lust', scriptName: 'Lust Score', disabled: false, __type: 'preset' }];
+globalThis.__PM_SAVES__ = 0;
+globalThis.__PM_RENDERS__ = 0;
+globalThis.__REGEX_SAVES__ = 0;
 globalThis.__PU__ = power_user;
 Object.defineProperty(globalThis, '__MODEL__', { get: () => model });
 Object.defineProperty(globalThis, '__PRESET__', { get: () => presetName });
@@ -83,10 +132,12 @@ const stub = {
 export const oai_settings = { get preset_settings_openai(){ return globalThis.__PRESET__; } };
 export function getChatCompletionModel(){ return globalThis.__MODEL__; }
 export const promptManager = { configuration:{promptOrder:{dummyId:100001}}, activeCharacter:{id:100001},
-  serviceSettings:{prompts:[],prompt_order:[{character_id:100001,order:[]}]}, saveServiceSettings(){}, render(){} };`),
+  serviceSettings:{prompts:globalThis.__PROMPTS__,prompt_order:[{character_id:100001,order:globalThis.__ORDER__}]},
+  saveServiceSettings(){globalThis.__PM_SAVES__++}, render(){globalThis.__PM_RENDERS__++} };`),
     engine: dataUrl(`
 export const SCRIPT_TYPES = { PRESET:'preset', GLOBAL:'global', SCOPED:'scoped' };
-export function getScriptsByType(){return[]} export function saveScriptsByType(){}
+export function getScriptsByType(type){return globalThis.__REGEX__.filter(s=>s.__type===type)}
+export function saveScriptsByType(){globalThis.__REGEX_SAVES__++}
 export function getCurrentPresetAPI(){return'openai'} export function getCurrentPresetName(){return globalThis.__PRESET__}
 export function isPresetScriptsAllowed(){return true} export function allowPresetScripts(){}`),
     powerUser: dataUrl('export const power_user = globalThis.__PU__;'),
@@ -127,7 +178,7 @@ const src = raw
     .replace("'/scripts/openai.js'", `'${stub.openai}'`)
     .replace("'/scripts/extensions/regex/engine.js'", `'${stub.engine}'`)
     .replace("'/scripts/power-user.js'", `'${stub.powerUser}'`)
-    .replace('    onReady();\n})();', '    globalThis.__OH__ = { Doctor, Watch, Core, Alerts };\n    onReady();\n})();');
+    .replace('    onReady();\n})();', '    globalThis.__OH__ = { Doctor, Watch, Core, Alerts, RequiredPrompts, Features, PatchNotice };\n    onReady();\n})();');
 if (src === raw) { console.error('boot rewrite matched nothing — assertions would be vacuous'); process.exit(1); }
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'oh-selfcheck-'));
@@ -138,7 +189,7 @@ try {
 } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
 }
-const { Doctor, Watch, Core, Alerts } = globalThis.__OH__;
+const { Doctor, Watch, Core, Alerts, RequiredPrompts, Features, PatchNotice } = globalThis.__OH__;
 Object.assign(Core.getSettings(), { enabled: true, checkFormatting: true, watchReasoning: true, alerts: true });
 const issueIds = async () => (await Doctor.check()).issues.map((i) => i.id).sort();
 
@@ -208,7 +259,58 @@ power_user.reasoning.prefix = 'WRONG'; // detection must not depend on live sett
 ctx.chat = [{ is_user: false, is_system: false, mes: '<planning>still detectable' }];
 ok('detects via constant, not settings', (await Watch.run())?.some((p) => p.id === 'thinkUnclosed'));
 
-console.log('RUNTIME 7) inspect() false-positive guards');
+console.log('RUNTIME 7) required Sigil prompts are enabled before every Omega generation');
+ok('all 15 known Sigil prompts match', requiredPromptNames.every((name) => RequiredPrompts.matches(name)));
+ok('unrelated prompt does not match', !RequiredPrompts.matches('Optional Sigil Theme (Prompt)'));
+presetName = 'Gemini Omega 4.2';
+const firstEnforce = await RequiredPrompts.enforce();
+ok('first pass enables all 15', firstEnforce.changed === 15
+    && globalThis.__ORDER__.filter((e) => e.identifier.startsWith('sigil-')).every((e) => e.enabled));
+ok('first pass saves once without redrawing native manager',
+    globalThis.__PM_SAVES__ === 1 && globalThis.__PM_RENDERS__ === 0);
+const secondEnforce = await RequiredPrompts.enforce();
+ok('clean pass performs no writes', secondEnforce.changed === 0
+    && globalThis.__PM_SAVES__ === 1 && globalThis.__PM_RENDERS__ === 0);
+presetName = 'NemoEngine 6';
+globalThis.__ORDER__[0].enabled = false;
+const skippedEnforce = await RequiredPrompts.enforce();
+ok('non-Omega preset stays untouched', skippedEnforce.skipped && !globalThis.__ORDER__[0].enabled);
+
+console.log('RUNTIME 8) preset prompts stay separate and follow preset sections');
+const sectioned = Features.assignPresetSections([
+    { identifier: 'heading-extension', name: '👇| **Extension** (เลือกฟีเจอร์) ↴', orderIndex: 10 },
+    { identifier: 'lust', name: 'Lust Score', orderIndex: 11 },
+    { identifier: 'heading-misc', name: '👇| **Miscellaneous** (โหมดอื่นๆ) ↴', orderIndex: 20 },
+    { identifier: 'quest', name: 'Super Quest', orderIndex: 21 },
+]);
+ok('reads Extension/Miscellaneous from preset headings',
+    sectioned[1].section.title === 'Extension' && sectioned[3].section.title === 'Miscellaneous');
+ok('heading prompts are marked as structure', sectioned[0].sectionHeader && sectioned[2].sectionHeader);
+ok('ornamental Tibetan divider is structure, not a prompt',
+    Features.isDivider('⁺‧₊˚ ཐི⋆♱⋆ཋྀ ˚₊‧⁺ ⁺‧₊˚ ཐི⋆♱⋆ཋྀ ˚₊‧⁺'));
+ok('real decorated prompt name is not a divider', !Features.isDivider('🌌──Aether (World Expansion)──⭐'));
+presetName = 'Gemini Omega 4.2';
+const lustOrder = globalThis.__ORDER__.find((e) => e.identifier === 'feature-lust');
+const lustRegex = globalThis.__REGEX__[0];
+Object.assign(Core.getSettings(), { reloadChatAfterToggle: false });
+lustOrder.enabled = true;
+lustRegex.disabled = false;
+const resolvedPrompts = await Features.resolve();
+let lustPack = resolvedPrompts.packs.find((pack) => pack.def.id === 'feature-lust');
+const aetherPack = resolvedPrompts.packs.find((pack) => pack.def.id === 'feature-aether');
+const nexusPack = resolvedPrompts.packs.find((pack) => pack.def.id === 'feature-nexus');
+ok('Aether and Nexus are two independent rows',
+    aetherPack?.prompts.length === 1 && nexusPack?.prompts.length === 1 && aetherPack !== nexusPack);
+ok('divider starts a second real Format segment',
+    aetherPack?.section.title === 'Format' && nexusPack?.section.title === 'Format · ส่วน 2');
+ok('divider itself is not rendered as a Prompt row',
+    !resolvedPrompts.packs.some((pack) => pack.def.id === 'divider-format'));
+ok('one prompt row never inherits regex', lustPack.regex.length === 0 && lustPack.mode === 'prompt');
+lustRegex.disabled = false;
+await Features.setPack(lustPack, false, { reload: false, quiet: true });
+ok('prompt toggle leaves Regex untouched', !lustOrder.enabled && !lustRegex.disabled);
+
+console.log('RUNTIME 9) inspect() false-positive guards');
 const T = { prefix: '<planning>', suffix: '</planning>' };
 const ins = (t) => Watch.inspect(t, T).map((p) => p.id);
 ok('html/markdown clean', ins('Reply <b>b</b> <i>i</i> <div><span>x</span></div>').length === 0, JSON.stringify(ins('<b>b</b>')));
@@ -216,6 +318,14 @@ ok('self-closing clean', ins('a<br/>b <img src="x"/>').length === 0);
 ok('balanced omega tag clean', ins('<LustScore>72</LustScore>').length === 0);
 ok('unpaired omega tag flagged', ins('<LustScore>72 text').includes('blockUnclosed'));
 ok('leftover parsed block flagged', ins('<planning>x</planning> hi').includes('thinkNotParsed'));
+
+console.log('RUNTIME 10) preset version parsing and comparison');
+ok('parses Omega name before its date',
+    JSON.stringify(PatchNotice.parseVersion('Gemini Omega 2.4.2 (7-6-26)')) === '[2,4,2]');
+ok('parses two-part JB version', JSON.stringify(PatchNotice.parseVersion('Custom JB v3.1')) === '[3,1,0]');
+ok('newer version compares above latest', PatchNotice.compare([3, 0, 0], [2, 4, 2]) > 0);
+ok('same version compares equal', PatchNotice.compare([2, 4, 2], [2, 4, 2]) === 0);
+ok('older version compares below latest', PatchNotice.compare([2, 4, 1], [2, 4, 2]) < 0);
 
 console.log(fail ? `\nFAILED: ${fail}` : `\nselfcheck: all assertions passed`);
 process.exit(fail ? 1 : 0);

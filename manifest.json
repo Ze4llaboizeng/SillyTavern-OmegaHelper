@@ -1,8 +1,8 @@
 {
   "display_name": "Omega Helper",
-  "version": "1.2.0",
-  "author": "Zealllll",
-  "description": "Sync Gemini Omega Chat Completion feature toggles with their preset regex (no other extensions required).",
+  "version": "1.2.1",
+  "author": "Zealllll & Xo.Nara",
+  "description": "Manage Gemini Omega prompts by their real preset sections, with a separate regex view.",
   "js": "index.js",
   "css": "style.css",
   "loading_order": 210,

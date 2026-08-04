@@ -519,6 +519,12 @@ body.oh-open #oh-quick-btn {
 
 .oh-badge.prompt { border-color: #6c8cff55; color: #9db4ff; }
 .oh-badge.regex { border-color: #c39bd355; color: #d7bde2; }
+.oh-badge.regex.ignored {
+  border-style: dashed;
+  border-color: var(--oh-line);
+  color: var(--oh-text);
+  opacity: 0.58;
+}
 .oh-badge.preset { border-color: #6c8cff55; color: #9db4ff; }
 .oh-badge.global { border-color: #7dcea055; color: #9fe0b8; }
 .oh-badge.scoped { border-color: #c39bd355; color: #d7bde2; }
@@ -538,6 +544,35 @@ body.oh-open #oh-quick-btn {
    ON   = green track + white knob
    HALF = amber track, knob centred (mixed prompt/regex)
    Only transform + background-color animate. No shadows on the moving knob. */
+.oh-toggle-wrap {
+  flex: 0 0 64px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.oh-toggle-text {
+  max-width: 100%;
+  font-size: 0.66em;
+  font-weight: 600;
+  line-height: 1.1;
+  white-space: nowrap;
+  cursor: pointer;
+  opacity: 0.68;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.oh-toggle-wrap.is-partial .oh-toggle-text {
+  color: #f2d489;
+  opacity: 1;
+}
+
+.oh-toggle-wrap.is-on .oh-toggle-text { color: #a6e6c1; }
+
 .oh-toggle {
   --w: 44px;
   --h: 26px;
