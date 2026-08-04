@@ -118,6 +118,7 @@ body.oh-open #oh-quick-btn {
 }
 
 #oh-panel {
+  position: relative;
   display: flex;
   flex-direction: column;
   width: min(760px, 100%);
@@ -438,6 +439,83 @@ body.oh-open #oh-quick-btn {
 .oh-group-body { padding: 2px 8px 6px; }
 .oh-group.collapsed .oh-group-body { display: none; }
 
+/* ============================ Custom prompt editor ============================ */
+.oh-prompt-editor {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  box-sizing: border-box;
+  background: rgb(0 0 0 / 72%);
+}
+
+.oh-prompt-editor-card {
+  width: min(560px, 100%);
+  max-height: 100%;
+  overflow: auto;
+  padding: 14px;
+  box-sizing: border-box;
+  border: 1px solid var(--oh-line);
+  border-radius: var(--oh-r-lg);
+  background: var(--oh-surface);
+  box-shadow: 0 8px 28px rgb(0 0 0 / 45%);
+}
+
+.oh-prompt-editor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.oh-prompt-editor-head b,
+.oh-prompt-editor-head small { display: block; }
+.oh-prompt-editor-head small { margin-top: 2px; opacity: 0.65; }
+
+.oh-prompt-editor-card > label,
+.oh-prompt-editor-options > label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 10px;
+  font-size: 0.88em;
+}
+
+.oh-prompt-editor-card input[type="text"],
+.oh-prompt-editor-card select,
+.oh-prompt-editor-card textarea {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.oh-prompt-editor-card input[type="text"],
+.oh-prompt-editor-card select { min-height: var(--oh-tap); }
+.oh-prompt-editor-card textarea { min-height: 132px; resize: vertical; }
+
+.oh-prompt-editor-options {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+  align-items: end;
+}
+
+.oh-prompt-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.oh-prompt-editor-actions .menu_button {
+  min-height: var(--oh-tap);
+  padding: 7px 12px;
+}
+
 /* ============================ Rows ============================ */
 .oh-row {
   display: flex;
@@ -480,6 +558,14 @@ body.oh-open #oh-quick-btn {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
+}
+
+.oh-row-edit {
+  flex: 0 0 var(--oh-tap);
+  width: var(--oh-tap);
+  min-width: var(--oh-tap);
+  min-height: var(--oh-tap);
+  padding: 6px;
 }
 
 .oh-row .oh-name .oh-main {
@@ -919,6 +1005,20 @@ body.oh-open {
     min-height: 38px;
     padding: 5px;
   }
+
+  .oh-prompt-editor {
+    align-items: flex-end;
+    padding: 8px 8px max(8px, env(safe-area-inset-bottom, 0px));
+  }
+
+  .oh-prompt-editor-card {
+    width: 100%;
+    max-height: 92%;
+    border-radius: var(--oh-r-lg) var(--oh-r-lg) 0 0;
+  }
+
+  .oh-prompt-editor-options { grid-template-columns: 1fr; gap: 0; }
+  .oh-prompt-editor-actions .menu_button { flex: 1 1 50%; justify-content: center; }
 
   .oh-group-title b,
   .oh-group-title small,

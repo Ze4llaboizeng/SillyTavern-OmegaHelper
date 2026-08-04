@@ -3,7 +3,7 @@
 ผู้ช่วยจัดการ Omega preset สำหรับ SillyTavern ใช้ง่ายบนมือถือและไม่กินสเปค
 A lightweight, mobile-friendly Omega preset manager for SillyTavern.
 
-**Version 1.2.1**
+**Version 1.2.2**
 **Dev by Zealllll & Xo.Nara**
 
 > อุทิศแด่ Omega preset — สาธุ 🙏
@@ -13,6 +13,8 @@ A lightweight, mobile-friendly Omega preset manager for SillyTavern.
 
 - แสดง Prompt ตามหมวดและเส้นคั่นจริงใน preset
   Shows prompts using the preset’s real sections and dividers.
+- แก้ไข Custom Prompt ได้จากหน้าจัดการ
+  Edit custom prompts directly in the manager.
 - แยกหน้าจัดการ Prompt และ Regex ชัดเจน
   Separate Prompt and Regex management.
 - เปิด–ปิดง่าย พร้อมสถานะที่อ่านเข้าใจทันที

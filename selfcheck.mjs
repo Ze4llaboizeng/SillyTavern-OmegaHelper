@@ -85,6 +85,14 @@ ok('single feature toggle does not full-refresh the panel',
 ok('prompt rows are not merged by feature keywords',
     raw.includes('One real prompt = one row') && !/for \(const def of FEATURE_DEFS\)/.test(raw));
 ok('prompt and regex controls are separate', !raw.includes('id="oh-sync-mode"'));
+ok('custom prompt rows expose an edit button',
+    raw.includes('oh-row-edit') && raw.includes('this.openPromptEditor(pack)'));
+ok('custom prompt edits are saved to the original prompt object',
+    /async update\(identifier,[\s\S]*prompt\.content = cleanContent[\s\S]*saveServiceSettings/.test(raw));
+ok('system prompts are protected from inline edits',
+    raw.includes('prompt.marker || prompt.system_prompt'));
+ok('custom prompt editor is styled for phones',
+    css.includes('.oh-prompt-editor') && /@media \(max-width:\s*768px\)[\s\S]*\.oh-prompt-editor-card/.test(css));
 
 // ============================== RUNTIME ==============================
 const noop = () => {};

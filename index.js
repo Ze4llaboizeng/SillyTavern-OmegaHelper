@@ -1,4 +1,4 @@
-/* Omega Helper v1.2.1 — preset-ordered Prompt manager + separate Regex controls */
+/* Omega Helper v1.2.2 — preset-ordered Prompt manager + separate Regex controls */
 (() => {
     if (typeof window === 'undefined') { global.window = {}; }
     if (window.__OMEGA_HELPER_LOADED__) return;
@@ -7,7 +7,7 @@
     const MODULE_NAME = 'omegaHelper';
     const EXT_ID = 'omega-helper';
     const LOG = '[OmegaHelper]';
-    const VERSION = '1.2.1';
+    const VERSION = '1.2.2';
 
     /** Update this block together with the extension whenever Omega ships a JB patch. */
     const PATCH_NOTICE = {
@@ -151,7 +151,11 @@
             const rawPrompts = (pm.serviceSettings?.prompts || []).map((p) => ({
                 identifier: p?.identifier,
                 name: p?.name || p?.identifier || '',
+                content: p?.content || '',
+                role: p?.role || 'system',
                 marker: !!p?.marker,
+                systemPrompt: !!p?.system_prompt,
+                editable: !p?.marker && !p?.system_prompt,
             })).filter((p) => p.identifier);
 
             let order = [];
@@ -247,6 +251,30 @@
                 }
             }
             return changed;
+        },
+        async update(identifier, { name, content, role = 'system' } = {}) {
+            const cleanName = String(name || '').trim();
+            const cleanContent = String(content || '').trim();
+            if (!cleanName) throw new Error('ใส่ชื่อ Prompt ก่อน');
+            if (!cleanContent) throw new Error('ใส่เนื้อหา Prompt ก่อน');
+
+            const pm = await this.getManager();
+            if (!pm?.serviceSettings) throw new Error('Chat Completion / Prompt Manager ยังไม่พร้อม');
+            const prompt = (pm.serviceSettings.prompts || [])
+                .find((item) => String(item?.identifier) === String(identifier));
+            if (!prompt) throw new Error('ไม่พบ Prompt ที่ต้องการแก้ไข');
+            if (prompt.marker || prompt.system_prompt) throw new Error('Prompt ระบบไม่อนุญาตให้แก้จากหน้านี้');
+
+            prompt.name = cleanName;
+            prompt.content = cleanContent;
+            prompt.role = ['system', 'user', 'assistant'].includes(role) ? role : 'system';
+
+            try {
+                if (typeof pm.saveServiceSettings === 'function') await pm.saveServiceSettings();
+                else Core.saveSettings();
+            } catch (_) { Core.saveSettings(); }
+            try { await pm.render?.(false); } catch (_) {}
+            return { identifier: prompt.identifier, name: cleanName };
         },
     };
 
@@ -1536,6 +1564,70 @@
             if (meta) meta.textContent = `${packs.filter((pack) => pack.state === 'on').length}/${packs.length}`;
         },
 
+        openPromptEditor(pack) {
+            const prompt = pack?.prompts?.[0];
+            if (!prompt?.editable) return Core.toast('info', 'รายการนี้เป็น Prompt ระบบ จึงแก้ไขจากหน้านี้ไม่ได้');
+            this.root?.querySelector('.oh-prompt-editor')?.remove();
+            const editor = document.createElement('div');
+            editor.className = 'oh-prompt-editor';
+            editor.innerHTML = `
+                <form class="oh-prompt-editor-card" aria-label="แก้ไข ${Core.escape(prompt.name)}">
+                    <div class="oh-prompt-editor-head">
+                        <div><b>แก้ไข Custom Prompt</b><small>${Core.escape(pack.section.title)}</small></div>
+                        <button type="button" class="menu_button menu_button_icon oh-prompt-editor-close" aria-label="ยกเลิก" title="ยกเลิก"><i class="fa-solid fa-xmark"></i></button>
+                    </div>
+                    <label>ชื่อ Prompt<input class="text_pole" name="name" required maxlength="160"></label>
+                    <label>เนื้อหา Prompt<textarea class="text_pole" name="content" required rows="9"></textarea></label>
+                    <div class="oh-prompt-editor-options">
+                        <label>Role<select class="text_pole" name="role"><option value="system">System</option><option value="user">User</option><option value="assistant">Assistant</option></select></label>
+                    </div>
+                    <div class="oh-prompt-editor-actions">
+                        <button type="button" class="menu_button oh-prompt-editor-cancel">ยกเลิก</button>
+                        <button type="submit" class="menu_button oh-prompt-editor-save"><i class="fa-solid fa-floppy-disk"></i> บันทึก</button>
+                    </div>
+                </form>
+            `;
+            this.root?.querySelector('#oh-panel')?.appendChild(editor);
+            const nameInput = editor.querySelector('input[name="name"]');
+            const contentInput = editor.querySelector('textarea[name="content"]');
+            const roleInput = editor.querySelector('select[name="role"]');
+            if (nameInput) nameInput.value = prompt.name;
+            if (contentInput) contentInput.value = prompt.content;
+            if (roleInput) roleInput.value = prompt.role;
+            const close = () => editor.remove();
+            editor.addEventListener('click', (event) => { if (event.target === editor) close(); });
+            editor.querySelector('.oh-prompt-editor-close')?.addEventListener('click', close);
+            editor.querySelector('.oh-prompt-editor-cancel')?.addEventListener('click', close);
+            editor.addEventListener('keydown', (event) => {
+                if (event.key === 'Escape') {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    close();
+                }
+            });
+            editor.querySelector('form')?.addEventListener('submit', async (event) => {
+                event.preventDefault();
+                const form = event.currentTarget;
+                const save = form.querySelector('.oh-prompt-editor-save');
+                const data = new FormData(form);
+                if (save) save.disabled = true;
+                try {
+                    const updated = await Prompts.update(prompt.identifier, {
+                        name: data.get('name'),
+                        content: data.get('content'),
+                        role: data.get('role'),
+                    });
+                    close();
+                    Core.toast('success', `บันทึก “${updated.name}” แล้ว`);
+                    await this.refresh();
+                } catch (err) {
+                    Core.toast('error', err?.message || String(err));
+                    if (save) save.disabled = false;
+                }
+            });
+            setTimeout(() => contentInput?.focus(), 0);
+        },
+
         renderFeatures(host) {
             const q = (this.search || '').trim().toLowerCase();
             const groups = Features.groupPacks(this.cache.packs || []);
@@ -1622,6 +1714,18 @@
                         <span class="oh-sub">${this.packSubHtml(pack)}</span>
                     `;
 
+                    const editButton = pack.prompts[0]?.editable
+                        ? document.createElement('button')
+                        : null;
+                    if (editButton) {
+                        editButton.type = 'button';
+                        editButton.className = 'menu_button menu_button_icon oh-row-edit';
+                        editButton.title = 'แก้ไข Custom Prompt';
+                        editButton.setAttribute('aria-label', `แก้ไข ${pack.def.title}`);
+                        editButton.innerHTML = '<i class="fa-solid fa-pen"></i>';
+                        editButton.addEventListener('click', () => this.openPromptEditor(pack));
+                    }
+
                     const toggleWrap = document.createElement('div');
                     toggleWrap.className = `oh-toggle-wrap is-${pack.state}`;
                     const stateText = document.createElement('span');
@@ -1691,6 +1795,7 @@
                     });
 
                     row.appendChild(nameBox);
+                    if (editButton) row.appendChild(editButton);
                     row.appendChild(toggleWrap);
                     body.appendChild(row);
                 }
