@@ -1,100 +1,74 @@
 # Omega Helper
 
-SillyTavern third-party extension that syncs **Chat Completion** feature prompts (JB/Omega OAI preset) with their **preset-embedded regex**.
+ผู้ช่วยจัดการ Omega preset สำหรับ SillyTavern ใช้ง่ายบนมือถือและไม่กินสเปค
+A lightweight, mobile-friendly Omega preset manager for SillyTavern.
 
-**Version:** 1.2.0 (see `manifest.json`)  
-**Author:** Zealllll  
-**Tuned for:** Gemini Omega 3.0 EXP (19-7-26) — 111 packs resolve, all 53 preset regex claimed  
-**Catalog:** 118 packs / 17 groups, also verified against 20-7, 30-7, 11-7 and 2.4 Extended
+**Version 1.2.2**
+**Dev by Zealllll & Xo.Nara**
 
-## Design rules
-- Uses only SillyTavern core APIs:
-  - `/scripts/openai.js` → Prompt Manager (`prompt_order` on/off)
-  - `/scripts/extensions/regex/engine.js` → preset/global/scoped regex
-- Does **not** depend on Prompt Peek, Tavern Helper, or any other third-party extension
-- Works for anyone who only installs this folder + loads an Omega-style OAI preset
+> อุทิศแด่ Omega preset — สาธุ 🙏
+> Dedicated to the Omega preset. 🙏
 
-## What a “feature” is
-One row = the JB prompt that teaches the model to emit a block **plus** the regex scripts that render/cut that block.
+## ความสามารถ / Features
 
-Example: toggle **Lust Score** off → disables the Lust Score completion prompt *and* Lust Score regex/cut-off scripts together.
+- แสดง Prompt ตามหมวดและเส้นคั่นจริงใน preset
+  Shows prompts using the preset’s real sections and dividers.
+- แก้ไข Custom Prompt ได้จากหน้าจัดการ
+  Edit custom prompts directly in the manager.
+- แยกหน้าจัดการ Prompt และ Regex ชัดเจน
+  Separate Prompt and Regex management.
+- เปิด–ปิดง่าย พร้อมสถานะที่อ่านเข้าใจทันที
+  Simple toggles with clear status.
+- รองรับมือถือและใช้เอฟเฟกต์เท่าที่จำเป็น
+  Mobile-friendly with minimal visual effects.
+- เปิด Sigil ที่จำเป็นก่อนสร้างข้อความด้วย Omega/5EX
+  Enables required Sigil prompts before Omega/5EX generation.
+- ตรวจเวอร์ชัน preset และแจ้งเตือนเมื่อมีแพตช์ใหม่
+  Checks preset versions and shows patch notifications.
+- ตรวจและช่วยแก้ Reasoning/Thinking ของโมเดล
+  Checks and helps fix model reasoning settings.
+- บันทึกโปรไฟล์ Prompt + Regex ได้
+  Saves Prompt + Regex profiles.
 
-Prompt-only packs (Core Logic, NSFW, Fun, Creator tools) show no `R` badge; regex-only packs (Intimacy, CoT cleanup) are tagged `regex only`.
+## ติดตั้ง / Install
 
-## Radio families (v1.2.0)
-Omega has several pick-one blocks. These groups behave like radio buttons — enabling one member disables its siblings, so you can't stack two engines or two languages:
+1. วางโฟลเดอร์นี้ไว้ที่
+   Put this folder in:
 
-| Group | Members |
-|---|---|
-| Engine | Luna, Helios, Aphrodite, Pantheon, Director Cuts |
-| Length | Chatty, Short, Medium, Long, Extended, Dynamic |
-| Prose Floor | L1 Yappers, L2 Balanced, L3 Novel |
-| Perspective | Omniscient, 1st, 3rd, Spectators |
-| Language | ไทย, English, 日本語, Russian, Vietnam, Español, Mandarin, Portuguese BR |
-| Pacing | Slow-Burn, Fast-paced (Chat Mode is independent) |
+   `SillyTavern/public/scripts/extensions/third-party/`
 
-Radio groups hide the "enable whole group" button and are marked with a blue left edge plus a `1 of N` badge. Turn this off with **Radio mode** in the extension settings if you want to stack manually.
+2. รีสตาร์ต SillyTavern แล้วเปิดใช้ **Omega Helper**
+   Restart SillyTavern and enable **Omega Helper**.
 
-## Groups in v1.2.0
-Engine · Romance/Lust · Status/Self · World/Clock · Trackers/Quest · UI Cards/Style · Length · Prose Floor · Perspective · Language · Pacing/Mode · Creator tools · Core Logic · Adultery (18+) · Fun/Misc · Cleanup/Safety
+3. รีเฟรชแบบไม่ใช้แคชด้วย `Ctrl + F5`
+   Hard refresh with `Ctrl + F5`.
 
-## Install (local folder)
-Copy / clone this repo into:
+## วิธีใช้ / Usage
 
-```text
-SillyTavern/public/scripts/extensions/third-party/SillyTavern-OmegaHelper/
-```
+- กดปุ่มสายฟ้า **⚡** เพื่อเปิดหน้าจัดการ
+  Tap **⚡** to open the manager.
+- แท็บ **Prompt** ใช้จัดการ Prompt
+  Use the **Prompt** tab to manage prompts.
+- แท็บ **Regex** ใช้จัดการ Regex
+  Use the **Regex** tab to manage regex scripts.
+- เมื่อมีแพตช์ใหม่ ให้กดลิงก์ Discord ในหน้าต่างแจ้งเตือน
+  When a patch is available, open the Discord link in the update notice.
 
-Required files: `manifest.json`, `index.js`, `style.css`.
+แหล่งแพตช์ / Patch source: [Omega Discord post](https://discord.com/channels/1325303011702079560/1455967291790331978/1512886868872659146)
 
-1. Restart ST / reload extensions
-2. Enable **Omega Helper**
-3. Ctrl+F5
-4. Load Gemini Omega (Chat Completion preset)
-5. Allow preset regex if ST asks (button in panel)
+## คำสั่ง / Commands
 
-### Install from private GitHub (VPS / another machine)
-Use a machine that can auth to the private repo (SSH key or HTTPS token with `repo` scope):
+- `/omega` — เปิด Omega Helper / Open Omega Helper
+- `/oh-check` — ตรวจการตั้งค่า / Check settings
+- `/oh-fix` — แก้การตั้งค่าที่ตรวจพบ / Fix detected settings
+
+## ตรวจสอบ / Verify
 
 ```bash
-# SSH (recommended once keys are set)
-cd /path/to/SillyTavern/public/scripts/extensions/third-party
-git clone git@github.com:OWNER/SillyTavern-OmegaHelper.git
-
-# or HTTPS
-git clone https://github.com/OWNER/SillyTavern-OmegaHelper.git
+node selfcheck.mjs
 ```
 
-Then restart ST, enable the extension, hard-refresh the browser.
+## เครดิต / Credits
 
-Update later:
-```bash
-cd /path/to/SillyTavern/public/scripts/extensions/third-party/SillyTavern-OmegaHelper
-git pull
-```
-
-## UI
-- Bolt button next to Send / Wand menu / Extensions drawer
-- Feature packs (primary)
-- Advanced: raw regex list (optional)
-- Profiles: save/load combined prompt+regex on/off sets (stored in this extension’s settings only)
-
-## Slash
-- `/omega` open panel
-- `/oh-feat Lust off` toggle feature by name
-- `/oh-on` / `/oh-off` regex by name (advanced)
-
-## Notes
-- Keyword matching — works across Omega versions without hardcoding every UUID
-- Soft-merge profiles: unknown new prompts/regex stay as-is
-- Chat reload after toggle updates rendered UI cards
-
-## Repo layout
-```text
-SillyTavern-OmegaHelper/
-  manifest.json
-  index.js
-  style.css
-  README.md
-  .gitignore
-```
+**Dev by Zeal & Nara**
+**อุทิศแด่ Omega preset — สาธุ 🙏**

@@ -1,7 +1,4 @@
-/* Omega Helper v1.2.0 — Chat Completion feature packs ↔ preset regex (core ST APIs only)
- * Tuned for Gemini Omega 3.0 EXP (19-7-26): 118 packs, 17 groups,
- * radio families for engine / length / prose / perspective / language / pacing.
- */
+/* Omega Helper v1.2.2 — preset-ordered Prompt manager + separate Regex controls */
 (() => {
     if (typeof window === 'undefined') { global.window = {}; }
     if (window.__OMEGA_HELPER_LOADED__) return;
@@ -10,7 +7,16 @@
     const MODULE_NAME = 'omegaHelper';
     const EXT_ID = 'omega-helper';
     const LOG = '[OmegaHelper]';
-    const VERSION = '1.2.0';
+    const VERSION = '1.2.2';
+
+    /** Update this block together with the extension whenever Omega ships a JB patch. */
+    const PATCH_NOTICE = {
+        id: 'gemini-omega-2.4.2-2026-06-07',
+        title: 'Gemini Omega 2.4.2',
+        version: '2.4.2',
+        fileName: 'Gemini Omega 2.4.2 (7-6-26).json',
+        sourceUrl: 'https://discord.com/channels/1325303011702079560/1455967291790331978/1512886868872659146',
+    };
 
     const DEFAULTS = {
         enabled: true,
@@ -18,202 +24,62 @@
         showWandButton: true,
         closeOnEscape: true,
         reloadChatAfterToggle: true,
-        syncMode: true, // prompt + regex together
-        radioMode: true, // engine/length/prose/view/language = pick one
         collapsedGroups: {},
         profiles: [],
         lastProfileId: null,
         lastSearch: '',
         activeTab: 'features', // features | regex
+        alerts: true,            // popup notifications
+        watchReasoning: true,    // detect truncated think / missing regex
+        checkFormatting: true,   // check Reasoning Formatting vs model
+        autoFixFormatting: false,
     };
 
-    /**
-     * Feature packs: keyword match against live Chat Completion prompts + regex names.
-     * No hard-coded UUIDs → survives Omega renames; no other extensions required.
-     * Tuned for Gemini Omega 3.0 EXP (19-7-26): 175 prompts / 53 preset regex.
-     * radio: only one pack in that radio family stays on (engine / length / prose / view / language / pacing).
-     */
-    const F = (id, group, title, icon, prompt, regex, extra) => ({
-        id, group, title, icon,
-        prompt: prompt || [],
-        regex: regex || [],
-        ...(extra || {}),
-    });
+    /** The reasoning template Omega/5EX presets expect. Both fields, both model rules. */
+    const REASONING_TEMPLATE = { prefix: '<planning>', suffix: '</planning>' };
 
-    const FEATURE_DEFS = [
-        // ── Romance / Lust ──────────────────────────────────────────────
-        F('lust', 'romance', 'Lust Score', 'fa-fire', [/lust score/i], [/lust score/i]),
-        F('romance_indicator', 'romance', 'Romance Indicator', 'fa-heart', [/romance indicator/i], [/rom-indi|romance indicator/i]),
-        // Regex-only: the Aphrodite prompt itself lives in the Engine radio family
-        F('intimacy', 'romance', 'Intimacy (regex pair)', 'fa-hand-holding-heart', [], [/\bintimacy\b/i]),
+    /** Only these preset families use the planning block. Anything else: stay out. */
+    const SUPPORTED_PRESET = /omega|5\s*ex|5ex/i;
 
-        // ── Status / Self ───────────────────────────────────────────────
-        F('user_status', 'status', 'User Status Namecard', 'fa-id-card', [/user status namecard/i], [/user status/i]),
-        F('self_stage', 'status', 'State of Char (Self Stage)', 'fa-user', [/state of char/i], [/self stage|self state/i]),
-        F('sline', 'status', 'S-Line', 'fa-circle-dot', [/s-line/i], []),
-
-        // ── World / Clock ───────────────────────────────────────────────
-        F('world_stage', 'world', 'Nexus UI (World Stage)', 'fa-desktop', [/nexus ui/i], [/world state|world stage/i]),
-        F('aether', 'world', 'Aether (World Expansion)', 'fa-globe', [/aether \(world/i], []),
-        F('world_clock', 'world', 'Time Awareness / Tiny Time', 'fa-clock', [/time awareness|tiny time tracker/i], [/world clock|tiny time tracker/i]),
-        F('weather', 'world', 'Weather Simulation', 'fa-cloud-sun-rain', [/weather simulation/i], []),
-        F('location_banner', 'world', 'Location Banner', 'fa-map-pin', [/location banner/i], []),
-        F('location_gyro', 'world', 'Location Gyroscope', 'fa-compass', [/location gyroscope/i], []),
-
-        // ── Trackers / Quest ────────────────────────────────────────────
-        F('position', 'trackers', 'Position Tracker', 'fa-location-dot', [/position tracker/i], [/position tracker/i]),
-        F('npc_tracker', 'trackers', 'NPCs Tracker', 'fa-people-group', [/npcs tracker/i], [/npcs tracker/i]),
-        F('extreme_tracker', 'trackers', 'Extreme Tracker', 'fa-person-running', [/extreme tracker/i], [/extreme tracker/i]),
-        F('qte', 'trackers', 'QTE', 'fa-bolt', [/\bqte\b|quick time event/i], [/quick time event|\bqte\b/i]),
-        F('super_quest', 'trackers', 'Super Quest', 'fa-coins', [/super quest/i], [/super quest/i]),
-        F('ambient', 'trackers', 'Ambient Scenes', 'fa-cloud', [/ambient scenes/i], [/ambient regex/i]),
-        F('battle_log', 'trackers', 'Battle Log', 'fa-calculator', [/battle log/i], [/battle log/i]),
-        F('dnd', 'trackers', 'DnD Roller', 'fa-dice', [/dnd roller/i], [/\bdnd\b/i]),
-        F('fate', 'trackers', 'Fate (โชคชะตา)', 'fa-khanda', [/🗡️ fate|\bfate \(/i], []),
-        F('artifact_drop', 'trackers', 'Artifact Drop (TEST)', 'fa-gem', [/artifact drop/i], []),
-        F('daily_news', 'trackers', 'Daily News', 'fa-newspaper', [/daily news/i], [/daily news/i]),
-        F('ai_ticker', 'trackers', 'AI News Ticker', 'fa-robot', [/ai news ticker/i], [/ai intercept/i]),
-        F('recall', 'trackers', 'Recall', 'fa-mountain-sun', [/\brecall\b/i], [/\brecall\b/i]),
-        F('next_scenario', 'trackers', 'Next Scenario', 'fa-brain', [/next scenario/i], [/next scenario/i]),
-
-        // ── UI Cards / Style ────────────────────────────────────────────
-        F('radio', 'ui', 'NPCs Radio Frequency', 'fa-radio', [/npcs radio|radio frequency/i], [/radio regex/i]),
-        F('phone', 'ui', 'Phone Indicator', 'fa-mobile-screen', [/phone indicator/i], [/phone regex/i]),
-        F('essential_banner', 'ui', 'Essential Banner', 'fa-panorama', [/essential banner/i], [/essential banner/i]),
-        F('quote_banner', 'ui', 'Quotation Banner', 'fa-quote-left', [/quotation banner/i], [/quote banner/i]),
-        F('name_tags', 'ui', 'Smol Name Tags', 'fa-tags', [/smol name tags|name tags/i], [/name tag/i]),
-        F('colorizer', 'ui', 'Dialogue Colorizer', 'fa-palette', [/dialogue colorizer/i], [/color font|span style/i]),
-        F('subtext', 'ui', 'Subtext Amplifier', 'fa-comment-dots', [/subtext amplifier/i], [/subtext regex/i]),
-        F('comment', 'ui', 'Comment Section', 'fa-comments', [/comment section/i], [/comment section/i]),
-        F('summary', 'ui', 'Small Summary', 'fa-file-lines', [/small summary/i], [/summary regex/i]),
-        F('visual_react', 'ui', 'Visual React', 'fa-wand-magic-sparkles', [/visual react/i], [/vision weaver|visual react/i]),
-        F('visual_snapshot', 'ui', 'Visual Snapshot', 'fa-camera', [/visual snapshot/i], [/visual snapshot/i]),
-        F('quote_swap', 'ui', 'Quote Swap', 'fa-right-left', [], [/quote swap/i]),
-
-        // ── Engines (radio: pick one) ───────────────────────────────────
-        F('luna', 'engine', 'Luna (Storyteller)', 'fa-moon', [/luna \(storyteller/i], [], { radio: 'engine' }),
-        F('helios', 'engine', 'Helios (All-rounder)', 'fa-sun', [/helios/i], [], { radio: 'engine' }),
-        F('aphrodite_engine', 'engine', 'Aphrodite (Romance)', 'fa-venus', [/aphrodite \(romance/i], [], { radio: 'engine' }),
-        F('pantheon', 'engine', 'Pantheon (Debation)', 'fa-landmark', [/pantheon/i], [], { radio: 'engine' }),
-        F('director_cuts', 'engine', 'Director Cuts', 'fa-clapperboard', [/director cuts/i], [], { radio: 'engine' }),
-
-        // ── Length (radio) ──────────────────────────────────────────────
-        F('len_chatty', 'length', 'Chatty (สั้นมาก)', 'fa-comment', [/──chatty/i], [], { radio: 'length' }),
-        F('len_short', 'length', 'Short (สั้น)', 'fa-align-left', [/──short/i], [], { radio: 'length' }),
-        F('len_medium', 'length', 'Medium (ปกติ)', 'fa-align-center', [/──medium/i], [], { radio: 'length' }),
-        F('len_long', 'length', 'Long (ยาว)', 'fa-align-justify', [/──long/i], [], { radio: 'length' }),
-        F('len_extended', 'length', 'Extended (ยาวมาก)', 'fa-bars-staggered', [/──extended/i], [], { radio: 'length' }),
-        F('len_dynamic', 'length', 'Dynamic (อัตโนมัติ)', 'fa-shuffle', [/──dynamic/i], [], { radio: 'length' }),
-
-        // ── Prose Floor (radio) ─────────────────────────────────────────
-        F('prose_l1', 'prose', 'L1 Yappers (80:20)', 'fa-comment-dots', [/l1 yappers/i], [], { radio: 'prose' }),
-        F('prose_l2', 'prose', 'L2 Balanced (50:50)', 'fa-scale-balanced', [/l2 balanced/i], [], { radio: 'prose' }),
-        F('prose_l3', 'prose', 'L3 Novel (30:70)', 'fa-book-open', [/l3 novel/i], [], { radio: 'prose' }),
-
-        // ── Perspective (radio) ─────────────────────────────────────────
-        F('view_omni', 'view', 'Omniscient (มุมมองพระเจ้า)', 'fa-eye', [/omniscient/i], [], { radio: 'view' }),
-        F('view_first', 'view', '1st Person', 'fa-user-large', [/1st person/i], [], { radio: 'view' }),
-        F('view_third', 'view', '3rd Person', 'fa-users', [/3rd person|บุคคลที่สาม/i], [], { radio: 'view' }),
-        F('view_spectator', 'view', 'Spectators Mode', 'fa-binoculars', [/spectators mode/i], [], { radio: 'view' }),
-
-        // ── Language (radio) ────────────────────────────────────────────
-        F('lang_th', 'language', 'ภาษาไทย', 'fa-language', [/ภาษาไทย/i], [], { radio: 'language' }),
-        F('lang_en', 'language', 'English', 'fa-language', [/──english/i], [], { radio: 'language' }),
-        F('lang_jp', 'language', '日本語', 'fa-language', [/日本語/i], [], { radio: 'language' }),
-        F('lang_ru', 'language', 'Russian', 'fa-language', [/russian/i], [], { radio: 'language' }),
-        F('lang_vn', 'language', 'Vietnam', 'fa-language', [/vietnam/i], [], { radio: 'language' }),
-        F('lang_es', 'language', 'Español', 'fa-language', [/español/i], [], { radio: 'language' }),
-        F('lang_cn', 'language', 'Mandarin', 'fa-language', [/mandarin/i], [], { radio: 'language' }),
-        F('lang_pt', 'language', 'Portuguese BR', 'fa-language', [/portuguese/i], [], { radio: 'language' }),
-
-        // ── Pacing / Mode ───────────────────────────────────────────────
-        F('pace_slow', 'pacing', 'Slow-Burn', 'fa-hourglass-half', [/slow-burn/i], [], { radio: 'pacing' }),
-        F('pace_fast', 'pacing', 'Fast-paced', 'fa-gauge-high', [/fast-paced/i], [], { radio: 'pacing' }),
-        F('mode_chat', 'pacing', 'Chat Mode (โหมดแชท)', 'fa-message', [/chat mode/i], []),
-
-        // ── Creator tools ───────────────────────────────────────────────
-        F('character_design', 'creator', 'Character Design (Bot Maker)', 'fa-gamepad', [/character design/i], [/bot maker|backup plan/i]),
-        F('first_message', 'creator', 'First Message Maker', 'fa-pen-nib', [/first message maker/i], []),
-        F('persona_creation', 'creator', 'Persona Creation', 'fa-user-pen', [/persona creation/i], []),
-        F('world_forge', 'creator', 'World Forge (สุ่มชื่อ)', 'fa-hammer', [/world forge/i], []),
-        F('summarizer', 'creator', 'The Summarizer', 'fa-scroll', [/the summarizer/i], []),
-        F('deep_char', 'creator', 'Deep-Char-DEV (TEST)', 'fa-dna', [/deep-char/i], []),
-        F('gender_detail', 'creator', 'Gender Detail', 'fa-venus-mars', [/gender detail/i], []),
-        F('npc_pack', 'creator', 'NPCs (definition pack)', 'fa-user-group', [/^\W*npcs\s*$/i], []),
-
-        // ── Core logic (Omega 3.0 spine) ────────────────────────────────
-        F('hidden_scene', 'core', 'Hidden Scene State', 'fa-clipboard-list', [/hidden scene state/i], []),
-        F('emit_order', 'core', 'Emit Order', 'fa-list-ol', [/emit order/i], []),
-        F('input_decode', 'core', 'Input Decode', 'fa-keyboard', [/input decode/i], []),
-        F('symbol_layer', 'core', 'Symbol Layer', 'fa-icons', [/symbol layer/i], []),
-        F('narrative', 'core', 'Narrative Structure', 'fa-ruler-combined', [/narrative structure/i], []),
-        F('normalization', 'core', 'Normalization', 'fa-equals', [/normalization/i], []),
-        F('syntax', 'core', 'Syntax Guard', 'fa-shield-halved', [/🛡️ syntax/i], []),
-        F('era_logic', 'core', 'Era Logic', 'fa-hourglass', [/era logic/i], []),
-        F('scene_hierarchy', 'core', 'Scene Hierarchy', 'fa-sitemap', [/scene hierarchy/i], []),
-        F('prefix', 'core', 'Prefix', 'fa-flask', [/🧪 prefix/i], []),
-        F('canon_extender', 'core', 'Canon Extender', 'fa-database', [/canon extender/i], []),
-        F('npc_core', 'core', 'NPC Core (tail echo)', 'fa-circle-nodes', [/npc core/i], []),
-        F('boundaries', 'core', 'Boundaries', 'fa-fire-flame-curved', [/🔥 boundaries/i], []),
-        F('metaphys', 'core', 'Meta-Physical', 'fa-hand-fist', [/meta-physical/i], []),
-        F('environment', 'core', 'Environment', 'fa-leaf', [/🌿 environment/i], []),
-        F('snippets', 'core', 'Snippets (Prefills)', 'fa-paste', [/snippets \(prefills/i], []),
-        F('writing_style', 'core', 'Custom Writing Style', 'fa-feather', [/ใส่สไตล์การเขียน/i], []),
-
-        // ── Adultery / NSFW ─────────────────────────────────────────────
-        F('nsfw_v1', 'nsfw', 'NSFW Enhanced V1', 'fa-heart-pulse', [/nsfw enhanced v1/i], []),
-        F('nsfw_v2', 'nsfw', 'NSFW Enhanced V2', 'fa-heart-pulse', [/nsfw enhanced v2/i], []),
-        F('nsfw_v3', 'nsfw', 'NSFW Enhanced V3', 'fa-heart-pulse', [/nsfw enhanced v3/i], []),
-        F('vulgarity', 'nsfw', 'Vulgarity (คำหยาบ)', 'fa-comment-slash', [/vulgarity/i], []),
-        F('kinetic', 'nsfw', 'Kinetic Dominance', 'fa-hand-back-fist', [/kinetic dominance/i], []),
-        F('xeno', 'nsfw', 'Xenobiological Enhanced', 'fa-cat', [/xenobiological/i], []),
-        F('breeding', 'nsfw', 'Breeding Kink', 'fa-baby', [/breeding kink/i], []),
-        F('somatic', 'nsfw', 'Somatic Hijack', 'fa-brain', [/somatic hijack/i], []),
-        F('infidelity', 'nsfw', 'Infidelity Enhanced', 'fa-heart-crack', [/infidelity/i], []),
-        F('gore', 'nsfw', 'Gore/Guro Enhanced', 'fa-droplet', [/gore\/guro/i], []),
-
-        // ── Fun / Misc ──────────────────────────────────────────────────
-        F('beast', 'fun', 'Beast Mode (ภาษาสัตว์)', 'fa-paw', [/beast mode/i], []),
-        F('ex25', 'fun', 'EX 2.5', 'fa-face-grin-stars', [/ex 2\.5/i], []),
-        F('polyglot', 'fun', 'Polyglot Quest', 'fa-earth-asia', [/polyglot quest/i], []),
-        F('absolute_order', 'fun', '{{user}} Absolute Order', 'fa-lock', [/absolute order/i], []),
-        F('sfx', 'fun', 'SFX / Sound Effect', 'fa-volume-high', [/sound effect|🎶💢 sfx/i], []),
-
-        // ── Cleanup / Safety ────────────────────────────────────────────
-        F('elevenlabs', 'cleanup', 'Elevenlabs TTS tags', 'fa-microphone', [/elevenlabs/i], [/elevenlabs/i]),
-        F('cleanup_core', 'cleanup', 'Thinking / CoT cleanup', 'fa-broom', [], [/thinking cleanup|strip leaked|unclosed-cot|meta transition/i]),
-        F('anti_slop', 'cleanup', 'Anti-Slop', 'fa-volume-xmark', [/anti-slop/i], []),
-        F('name_deslop', 'cleanup', 'Name De-Slop', 'fa-signature', [/name de-slop/i], []),
-        F('craft_guard', 'cleanup', 'Craft Guard (tail echo)', 'fa-shield', [/craft guard/i], []),
-        // Legacy Omega 2.x / early 3.0 token-savers + punctuation strippers (regex-only)
-        F('token_saver', 'cleanup', 'ประหยัดโทเค็น / ลดโค้ด', 'fa-compress', [], [/ประหยัดโทเค็น|ลดจำนวนโทเค็น/i]),
-        F('punct_strip', 'cleanup', 'ลบ em dash / ... / วงเล็บ', 'fa-eraser', [], [/^ลบ /i]),
-        F('transition_block', 'cleanup', 'Transition Block', 'fa-arrows-left-right-to-line', [], [/^transition block/i]),
-        F('spatial_grid', 'cleanup', 'Spatial Grid', 'fa-table-cells', [], [/spatial grid/i]),
-        F('glass_shell', 'cleanup', 'Comms — Glass Shell', 'fa-tower-broadcast', [], [/glass shell/i]),
-        F('press_log', 'cleanup', 'Press Log', 'fa-file-invoice', [], [/press log/i]),
+    /** Omega infrastructure prompts that must be enabled before every real generation. */
+    const REQUIRED_PROMPT_PATTERNS = [
+        /^sigil\s+(?:fence|clock|stage|facts)\s+cut\s*\(display\)$/i,
+        /^sigil\s+normalize\s+(?:clk|stg|fact)\s*\(prompt\)$/i,
+        /^sigil\s+trim\s+(?:clk|stg|fact)\s*\(prompt\)$/i,
+        /^sigil\s+auto[-\s]fence\s+wrap\s*\(prompt\)$/i,
+        /^sigil\s+(?:fence|clock|stage|facts)\s+cut[-\s]off\s*\(prompt\)$/i,
     ];
 
-    const GROUP_META = {
-        engine: { title: 'Engine (เลือก 1)', icon: 'fa-gears', order: 5, radio: 'engine' },
-        romance: { title: 'Romance / Lust', icon: 'fa-heart', order: 10 },
-        status: { title: 'Status / Self', icon: 'fa-id-card', order: 20 },
-        world: { title: 'World / Clock', icon: 'fa-globe', order: 30 },
-        trackers: { title: 'Trackers / Quest', icon: 'fa-location-crosshairs', order: 40 },
-        ui: { title: 'UI Cards / Style', icon: 'fa-palette', order: 50 },
-        length: { title: 'Length (เลือก 1)', icon: 'fa-ruler-horizontal', order: 55, radio: 'length' },
-        prose: { title: 'Prose Floor (เลือก 1)', icon: 'fa-scale-balanced', order: 56, radio: 'prose' },
-        view: { title: 'Perspective (เลือก 1)', icon: 'fa-eye', order: 57, radio: 'view' },
-        language: { title: 'Language (เลือก 1)', icon: 'fa-language', order: 58, radio: 'language' },
-        pacing: { title: 'Pacing / Mode', icon: 'fa-gauge', order: 59 },
-        creator: { title: 'Creator tools', icon: 'fa-screwdriver-wrench', order: 60 },
-        core: { title: 'Core Logic (Omega spine)', icon: 'fa-microchip', order: 65 },
-        nsfw: { title: 'Adultery (18+)', icon: 'fa-fire-flame-curved', order: 68 },
-        fun: { title: 'Fun / Misc', icon: 'fa-face-laugh-squint', order: 69 },
-        cleanup: { title: 'Cleanup / Safety', icon: 'fa-broom', order: 70 },
-        other: { title: 'Other', icon: 'fa-ellipsis', order: 90 },
+    /**
+     * Reasoning Formatting rules per model family.
+     * prefill  = Start Reply With must hold the reasoning prefix + show prefix in chat ON
+     *            (gemini 3.5 flash / 3.1 pro and older)
+     * noPrefill = Start Reply With empty + show prefix in chat OFF
+     *            (gemini 3.5 flash-lite, 3.6 flash and newer)
+     */
+    const MODEL_RULES = {
+        prefill: {
+            id: 'prefill',
+            label: 'Prefill (3.5 flash / 3.1 pro ลงมา)',
+            startReplyWith: 'prefix',
+            showPrefix: true,
+        },
+        noPrefill: {
+            id: 'noPrefill',
+            label: 'No prefill (3.5 flash-lite / 3.6 flash ขึ้นไป)',
+            startReplyWith: '',
+            showPrefix: false,
+        },
     };
 
+    /** HTML/markdown tags that are never Omega UI blocks — skip in leak scan */
+    const HTML_TAGS = new Set([
+        'a', 'b', 'br', 'i', 'p', 'em', 'hr', 'li', 'ol', 'ul', 'td', 'th', 'tr', 'h1', 'h2', 'h3',
+        'h4', 'h5', 'h6', 'div', 'img', 'pre', 'sub', 'sup', 'code', 'font', 'span', 'small', 'table',
+        'tbody', 'thead', 'tfoot', 'strong', 'details', 'summary', 'style', 'script', 'blockquote',
+        'button', 'input', 'label', 'select', 'option', 'section', 'header', 'footer', 'figure', 'svg',
+        'path', 'video', 'audio', 'iframe', 'canvas', 'center', 'mark', 'del', 'ins', 'u', 's',
+    ]);
 
     const Core = {
         getContext() {
@@ -261,14 +127,54 @@
     // -----------------------------------------------------------------------
     const Prompts = {
         mod: null,
+        manager: null,
+        saveQueue: Promise.resolve(),
         async load() {
             if (this.mod) return this.mod;
             this.mod = await import('/scripts/openai.js');
             return this.mod;
         },
         async getManager() {
+            if (this.manager) return this.manager;
             const mod = await this.load();
-            return mod?.promptManager || null;
+            this.manager = mod?.promptManager || null;
+            return this.manager;
+        },
+        queueSave(pm, render = false) {
+            this.saveQueue = this.saveQueue.catch(() => {}).then(async () => {
+                try {
+                    if (typeof pm.saveServiceSettings === 'function') await pm.saveServiceSettings();
+                    else Core.saveSettings();
+                } catch (_) { Core.saveSettings(); }
+                if (render) {
+                    try { await pm.render?.(false); } catch (_) {}
+                }
+            });
+            return this.saveQueue;
+        },
+        syncNativeEnabled(pm, identifiers, enabled) {
+            const ids = new Set((identifiers || []).map(String));
+            if (!ids.size) return;
+            const prefix = pm?.configuration?.prefix || 'completion_';
+            const disabledClass = `${prefix}prompt_manager_prompt_disabled`;
+            const container = pm?.containerElement
+                || document.getElementById(pm?.configuration?.containerIdentifier)
+                || document;
+
+            // Patch only the affected native rows. A full Prompt Manager render
+            // recalculates the whole list and is noticeably slow on phones.
+            container.querySelectorAll?.('[data-pm-identifier]')?.forEach((row) => {
+                if (!ids.has(String(row?.dataset?.pmIdentifier))) return;
+                row.classList.toggle(disabledClass, !enabled);
+                const toggle = row.querySelector?.('.prompt-manager-toggle-action');
+                toggle?.classList.toggle('fa-toggle-on', !!enabled);
+                toggle?.classList.toggle('fa-toggle-off', !enabled);
+            });
+
+            try {
+                const counts = pm?.tokenHandler?.getCounts?.();
+                if (counts) for (const id of ids) counts[id] = null;
+            } catch (_) {}
         },
         async getOaiName() {
             try {
@@ -282,10 +188,14 @@
             const pm = await this.getManager();
             if (!pm) return { prompts: [], order: [], pm: null };
 
-            const prompts = (pm.serviceSettings?.prompts || []).map((p) => ({
+            const rawPrompts = (pm.serviceSettings?.prompts || []).map((p) => ({
                 identifier: p?.identifier,
                 name: p?.name || p?.identifier || '',
+                content: p?.content || '',
+                role: p?.role || 'system',
                 marker: !!p?.marker,
+                systemPrompt: !!p?.system_prompt,
+                editable: !p?.marker && !p?.system_prompt,
             })).filter((p) => p.identifier);
 
             let order = [];
@@ -301,8 +211,24 @@
                 order = hit?.order || [];
             }
             const enabledMap = new Map((order || []).map((e) => [String(e.identifier), !!e.enabled]));
+            const promptMap = new Map(rawPrompts.map((p) => [String(p.identifier), p]));
+            const orderedPrompts = [];
+            const seen = new Set();
+            for (let orderIndex = 0; orderIndex < (order || []).length; orderIndex += 1) {
+                const entry = order[orderIndex];
+                const id = String(entry?.identifier ?? '');
+                const prompt = promptMap.get(id);
+                if (!prompt || seen.has(id)) continue;
+                seen.add(id);
+                orderedPrompts.push({ ...prompt, orderIndex });
+            }
+            for (const prompt of rawPrompts) {
+                const id = String(prompt.identifier);
+                if (seen.has(id)) continue;
+                orderedPrompts.push({ ...prompt, orderIndex: Number.MAX_SAFE_INTEGER });
+            }
             return {
-                prompts: prompts.map((p) => ({
+                prompts: orderedPrompts.map((p) => ({
                     ...p,
                     enabled: enabledMap.has(String(p.identifier)) ? enabledMap.get(String(p.identifier)) : false,
                     inOrder: enabledMap.has(String(p.identifier)),
@@ -311,7 +237,7 @@
                 pm,
             };
         },
-        async setEnabled(identifiers, enabled) {
+        async setEnabled(identifiers, enabled, { render = true } = {}) {
             const ids = [...new Set((identifiers || []).map(String).filter(Boolean))];
             if (!ids.length) return 0;
             const pm = await this.getManager();
@@ -351,14 +277,73 @@
                 changed += 1;
             }
 
+            // Avoid disk writes and a full Prompt Manager render on the common
+            // every-turn path where all required prompts are already enabled.
+            if (changed > 0) {
+                this.syncNativeEnabled(pm, ids, enabled);
+                // The live prompt_order above is authoritative immediately.
+                // Persistence runs serially in the background so rapid taps never wait.
+                void this.queueSave(pm, render);
+            }
+            return changed;
+        },
+        async update(identifier, { name, content, role = 'system' } = {}) {
+            const cleanName = String(name || '').trim();
+            const cleanContent = String(content || '').trim();
+            if (!cleanName) throw new Error('ใส่ชื่อ Prompt ก่อน');
+            if (!cleanContent) throw new Error('ใส่เนื้อหา Prompt ก่อน');
+
+            const pm = await this.getManager();
+            if (!pm?.serviceSettings) throw new Error('Chat Completion / Prompt Manager ยังไม่พร้อม');
+            const prompt = (pm.serviceSettings.prompts || [])
+                .find((item) => String(item?.identifier) === String(identifier));
+            if (!prompt) throw new Error('ไม่พบ Prompt ที่ต้องการแก้ไข');
+            if (prompt.marker || prompt.system_prompt) throw new Error('Prompt ระบบไม่อนุญาตให้แก้จากหน้านี้');
+
+            prompt.name = cleanName;
+            prompt.content = cleanContent;
+            prompt.role = ['system', 'user', 'assistant'].includes(role) ? role : 'system';
+
             try {
                 if (typeof pm.saveServiceSettings === 'function') await pm.saveServiceSettings();
                 else Core.saveSettings();
-            } catch (_) {
-                Core.saveSettings();
-            }
+            } catch (_) { Core.saveSettings(); }
             try { await pm.render?.(false); } catch (_) {}
-            return changed;
+            return { identifier: prompt.identifier, name: cleanName };
+        },
+    };
+
+    const RequiredPrompts = {
+        matches(name) {
+            const value = String(name || '').trim().replace(/\s+/g, ' ');
+            return REQUIRED_PROMPT_PATTERNS.some((pattern) => pattern.test(value));
+        },
+
+        inspect(prompts) {
+            const required = (prompts || []).filter((prompt) => !prompt.marker && this.matches(prompt.name));
+            return {
+                required,
+                total: required.length,
+                on: required.filter((prompt) => prompt.enabled).length,
+                off: required.filter((prompt) => !prompt.enabled),
+            };
+        },
+
+        async enforce() {
+            const settings = Core.getSettings();
+            if (!settings.enabled) return { skipped: true, changed: 0, total: 0 };
+
+            const preset = await Prompts.getOaiName();
+            if (!SUPPORTED_PRESET.test(String(preset || ''))) {
+                return { skipped: true, changed: 0, total: 0, preset };
+            }
+
+            const { prompts } = await Prompts.listLive();
+            const state = this.inspect(prompts);
+            const changed = state.off.length
+                ? await Prompts.setEnabled(state.off.map((prompt) => prompt.identifier), true, { render: false })
+                : 0;
+            return { ...state, changed, preset };
         },
     };
 
@@ -368,6 +353,7 @@
     const Engine = {
         mod: null,
         loading: null,
+        saveQueue: Promise.resolve(),
         async load() {
             if (this.mod) return this.mod;
             if (this.loading) return this.loading;
@@ -410,6 +396,13 @@
                 }
             } catch (_) {}
         },
+        queueSave(type) {
+            this.saveQueue = this.saveQueue.catch(() => {}).then(async () => {
+                const m = await this.load();
+                await this.saveScripts(m.getScriptsByType(type) || [], type);
+            });
+            return this.saveQueue;
+        },
         async isPresetAllowed() {
             try {
                 const m = await this.load();
@@ -433,7 +426,11 @@
         async setEnabled(ids, enabled) {
             const want = new Set((ids || []).filter(Boolean));
             if (!want.size) return 0;
-            const all = await this.listAll();
+            const all = this.mod
+                ? Object.entries(this.mod.SCRIPT_TYPES).flatMap(([key, type]) =>
+                    (this.mod.getScriptsByType(type) || []).filter(Boolean)
+                        .map((script) => ({ script, type, typeName: key.toLowerCase() })))
+                : await this.listAll();
             const byType = new Map();
             let changed = 0;
             for (const e of all) {
@@ -445,7 +442,8 @@
                 changed += 1;
             }
             for (const type of byType.keys()) {
-                await this.saveScripts(await this.getScriptsByType(type), type);
+                // Regex objects are already live; only persistence is deferred.
+                void this.queueSave(type);
             }
             return changed;
         },
@@ -472,10 +470,56 @@
     // Feature resolution
     // -----------------------------------------------------------------------
     const Features = {
-        anyMatch(name, patterns) {
-            if (!patterns?.length) return false;
-            const n = String(name || '');
-            return patterns.some((re) => re.test(n));
+        sectionTitle(name) {
+            const match = String(name || '').match(/\*\*\s*([^*]+?)\s*\*\*/);
+            return match?.[1]?.trim() || null;
+        },
+
+        isDivider(name) {
+            const value = String(name || '').replace(/\s+/g, '');
+            if (value.length < 6 || !/[─━—═⋅⋆☆★♱˚₊⁺‧୨୧]/u.test(value)) return false;
+            const meaningful = value.match(/[\p{L}\p{N}]/gu)?.length || 0;
+            const length = [...value].length;
+            // Ornament dividers may contain Tibetan glyphs that Unicode labels as
+            // letters. Their text-to-decoration ratio is still very low.
+            return meaningful <= 1 || meaningful / length <= 0.28;
+        },
+
+        assignPresetSections(prompts) {
+            let base = { id: 'preset-core', title: 'Preset หลัก' };
+            let section = { ...base, order: -1 };
+            let sectionOrder = 0;
+            let part = 1;
+            let dividerPending = false;
+            return (prompts || []).map((prompt) => {
+                const title = this.sectionTitle(prompt.name);
+                if (title) {
+                    base = { id: `preset:${String(prompt.identifier)}`, title };
+                    section = { ...base, order: sectionOrder };
+                    sectionOrder += 1;
+                    part = 1;
+                    dividerPending = false;
+                    return { ...prompt, section, sectionHeader: true, sectionDivider: false };
+                }
+
+                const divider = this.isDivider(prompt.name);
+                if (divider) {
+                    dividerPending = true;
+                    return { ...prompt, section, sectionHeader: false, sectionDivider: true };
+                }
+
+                if (dividerPending) {
+                    part += 1;
+                    section = {
+                        id: `${base.id}:part:${part}`,
+                        title: `${base.title} · ส่วน ${part}`,
+                        order: sectionOrder,
+                    };
+                    sectionOrder += 1;
+                    dividerPending = false;
+                }
+                return { ...prompt, section, sectionHeader: false, sectionDivider: false };
+            });
         },
 
         async resolve() {
@@ -484,133 +528,105 @@
                 Engine.listAll(),
             ]);
 
-            // Skip pure separators / empty markers for matching noise
-            const promptPool = prompts.filter((p) => p.name && !p.marker);
-            const packs = [];
-
-            for (const def of FEATURE_DEFS) {
-                const pHits = promptPool.filter((p) => this.anyMatch(p.name, def.prompt));
-                const rHits = regexAll.filter((e) => this.anyMatch(e.script.scriptName, def.regex));
-
-                if (!pHits.length && !rHits.length) continue;
-
-                const promptOn = pHits.filter((p) => p.enabled).length;
-                const regexOn = rHits.filter((e) => !e.script.disabled).length;
-                const totalBits = pHits.length + rHits.length;
-                const onBits = promptOn + regexOn;
-
-                let state = 'off';
-                if (totalBits && onBits === totalBits) state = 'on';
-                else if (onBits > 0) state = 'partial';
-
-                packs.push({
-                    def,
-                    prompts: pHits,
-                    regex: rHits,
-                    state,
-                    promptOn,
-                    regexOn,
-                    totalBits,
-                    onBits,
-                });
-            }
-
-            // Unmatched ★ prompts (optional discoverability)
-            const claimedP = new Set();
-            const claimedR = new Set();
-            for (const pack of packs) {
-                for (const p of pack.prompts) claimedP.add(p.identifier);
-                for (const r of pack.regex) claimedR.add(r.script.id);
-            }
-
-            const leftoverPrompts = promptPool.filter((p) =>
-                /[⭐✩]|\(⭐\)|\(ui\)/i.test(p.name) && !claimedP.has(p.identifier)
+            // Preserve the preset's own prompt_order and **section headers**.
+            // One real prompt = one row. No keyword merging or guessed P↔R pair.
+            const sectionedPrompts = this.assignPresetSections(prompts);
+            const promptPool = sectionedPrompts.filter((p) =>
+                p.name && p.inOrder && !p.marker && !p.sectionHeader && !p.sectionDivider
             );
-            const leftoverRegex = regexAll.filter((e) => !claimedR.has(e.script.id));
+            const packs = promptPool.map((prompt) => ({
+                def: {
+                    id: String(prompt.identifier),
+                    title: prompt.name,
+                    icon: 'fa-message',
+                },
+                prompts: [prompt],
+                regex: [],
+                state: prompt.enabled ? 'on' : 'off',
+                promptOn: prompt.enabled ? 1 : 0,
+                regexOn: 0,
+                totalBits: 1,
+                onBits: prompt.enabled ? 1 : 0,
+                controlledTotal: 1,
+                controlledOn: prompt.enabled ? 1 : 0,
+                controlsRegex: false,
+                mode: 'prompt',
+                section: prompt.section,
+                orderIndex: prompt.orderIndex,
+            }));
 
-            return { packs, leftoverPrompts, leftoverRegex, promptPool, regexAll };
+            return {
+                packs,
+                leftoverPrompts: [],
+                leftoverRegex: regexAll,
+                promptPool,
+                sectionedPrompts,
+                regexAll,
+            };
         },
 
         groupPacks(packs) {
             const map = new Map();
             for (const pack of packs) {
-                const gid = pack.def.group || 'other';
+                const gid = pack.section.id;
                 if (!map.has(gid)) {
-                    const meta = GROUP_META[gid] || GROUP_META.other;
+                    const meta = {
+                        title: pack.section.title,
+                        icon: 'fa-layer-group',
+                        order: pack.section.order,
+                    };
                     map.set(gid, { id: gid, meta, items: [] });
                 }
                 map.get(gid).items.push(pack);
             }
-            return [...map.values()].sort((a, b) => (a.meta.order || 99) - (b.meta.order || 99));
-        },
-
-        /**
-         * Radio families (engine / length / prose / view / language): turning one on
-         * turns the siblings off, so Omega never gets two engines or two languages at once.
-         */
-        async exclusive(pack, allPacks) {
-            const fam = pack.def.radio;
-            if (!fam) return 0;
-            const st = Core.getSettings();
-            if (st.radioMode === false) return 0;
-            const siblings = (allPacks || []).filter((p) =>
-                p.def.radio === fam && p.def.id !== pack.def.id && p.state !== 'off'
-            );
-            let off = 0;
-            for (const sib of siblings) {
-                const ids = sib.prompts.map((p) => p.identifier);
-                if (ids.length) off += await Prompts.setEnabled(ids, false);
-                const rIds = sib.regex.map((e) => e.script.id);
-                if (rIds.length) off += await Engine.setEnabled(rIds, false);
+            for (const group of map.values()) {
+                group.items.sort((a, b) => a.orderIndex - b.orderIndex);
             }
-            return off;
+            return [...map.values()].sort((a, b) => a.meta.order - b.meta.order);
         },
 
-        async setPack(pack, enabled, { reload = true, quiet = false, allPacks = null } = {}) {
-            const pIds = pack.prompts.map((p) => p.identifier);
-            const rIds = pack.regex.map((e) => e.script.id);
-            const st = Core.getSettings();
+        async setPacks(packs, enabled, { reload = true, quiet = false, label = '' } = {}) {
+            const list = packs || [];
+            const pIds = [...new Set(list.flatMap((pack) => pack.prompts.map((p) => p.identifier)))];
+
+            // Update the view-model synchronously. The live prompt_order mutation
+            // happens in the same tap; disk persistence continues in background.
+            for (const pack of list) {
+                for (const prompt of pack.prompts) prompt.enabled = !!enabled;
+                pack.promptOn = pack.prompts.filter((p) => p.enabled).length;
+                pack.controlledOn = pack.promptOn;
+                pack.controlledTotal = pack.prompts.length;
+                pack.state = pack.controlledOn === 0 ? 'off'
+                    : (pack.controlledOn === pack.controlledTotal ? 'on' : 'partial');
+            }
 
             let pChanged = 0;
-            let rChanged = 0;
-            let sibOff = 0;
-            if (enabled && pack.def.radio) {
-                sibOff = await this.exclusive(pack, allPacks || (await this.resolve()).packs);
-            }
-            if (pIds.length) pChanged = await Prompts.setEnabled(pIds, enabled);
-            if (rIds.length && st.syncMode !== false) rChanged = await Engine.setEnabled(rIds, enabled);
-            else if (rIds.length && st.syncMode === false && !pIds.length) {
-                // regex-only pack
-                rChanged = await Engine.setEnabled(rIds, enabled);
-            }
+            if (pIds.length) pChanged = await Prompts.setEnabled(pIds, enabled, { render: false });
 
             if (!quiet) {
                 Core.toast(
                     'success',
-                    `${enabled ? 'เปิด' : 'ปิด'} ${pack.def.title} · prompt ${pChanged} · regex ${rChanged}`
-                    + (sibOff ? ` · สลับออก ${sibOff}` : ''),
+                    `${enabled ? 'เปิด' : 'ปิด'} ${label || 'Prompt'} · เปลี่ยน ${pChanged}`,
                 );
             }
             if (reload) await Engine.reloadChatIfNeeded();
-            return { pChanged, rChanged, sibOff };
+            return { pChanged, rChanged: 0 };
+        },
+
+        async setPack(pack, enabled, options = {}) {
+            return this.setPacks([pack], enabled, { ...options, label: pack.def.title });
         },
 
         async setGroup(groupId, enabled) {
             const { packs } = await this.resolve();
-            let subset = packs.filter((p) => p.def.group === groupId);
+            const subset = packs.filter((p) => p.section.id === groupId);
             if (!subset.length) throw new Error(`ไม่พบกลุ่ม ${groupId}`);
-            // Radio family: "เปิดทั้งกลุ่ม" would stack conflicting prompts → keep only the first
-            const isRadio = subset.every((p) => p.def.radio) && Core.getSettings().radioMode !== false;
-            if (isRadio && enabled) subset = subset.slice(0, 1);
-            let p = 0; let r = 0;
-            for (const pack of subset) {
-                const res = await this.setPack(pack, enabled, { reload: false, quiet: true, allPacks: packs });
-                p += res.pChanged;
-                r += res.rChanged;
-            }
-            await Engine.reloadChatIfNeeded();
-            Core.toast('success', `${enabled ? 'เปิด' : 'ปิด'}กลุ่ม · prompt ${p} · regex ${r}`);
-            return { p, r };
+            const result = await this.setPacks(subset, enabled, {
+                reload: false,
+                quiet: false,
+                label: `ทั้งหมวด ${subset[0]?.section?.title || groupId}`,
+            });
+            return { p: result.pChanged, r: result.rChanged };
         },
 
         async setByName(query, enabled) {
@@ -756,12 +772,498 @@
     // -----------------------------------------------------------------------
     // Panel UI
     // -----------------------------------------------------------------------
+    // -----------------------------------------------------------------------
+    // Alerts — web-style popup cards (dedup by key, action buttons)
+    // -----------------------------------------------------------------------
+    const Alerts = {
+        host: null,
+        shown: new Map(), // key -> timestamp
+
+        ensureHost() {
+            if (this.host?.isConnected) return this.host;
+            let el = document.getElementById('oh-alerts');
+            if (!el) {
+                el = document.createElement('div');
+                el.id = 'oh-alerts';
+                el.setAttribute('role', 'status');
+                el.setAttribute('aria-live', 'polite');
+                document.body.appendChild(el);
+            }
+            this.host = el;
+            return el;
+        },
+
+        /**
+         * @param {object} o
+         * @param {string} o.key dedup key
+         * @param {'warn'|'error'|'ok'|'info'} [o.level]
+         * @param {string} o.title
+         * @param {string} [o.body] plain text (escaped)
+         * @param {Array<{label:string, icon?:string, primary?:boolean, run:function}>} [o.actions]
+         * @param {number} [o.ttl] auto-dismiss ms (0 = sticky)
+         * @param {number} [o.cooldown] ms before the same key can re-show
+         */
+        show(o) {
+            const st = Core.getSettings();
+            if (!st.enabled || !st.alerts) return null;
+            const key = o.key || Core.uid();
+            const cooldown = o.cooldown ?? 20000;
+            const last = this.shown.get(key) || 0;
+            if (Date.now() - last < cooldown) return null;
+            this.shown.set(key, Date.now());
+
+            const host = this.ensureHost();
+            host.querySelector(`.oh-alert[data-key="${CSS.escape(key)}"]`)?.remove();
+
+            const card = document.createElement('div');
+            card.className = `oh-alert ${o.level || 'warn'}`;
+            card.dataset.key = key;
+            const icon = { warn: 'fa-triangle-exclamation', error: 'fa-circle-xmark', ok: 'fa-circle-check', info: 'fa-circle-info' }[o.level || 'warn'];
+            card.innerHTML = `
+                <div class="oh-alert-icon"><i class="fa-solid ${icon}"></i></div>
+                <div class="oh-alert-main">
+                    <div class="oh-alert-title"></div>
+                    ${o.body ? '<div class="oh-alert-body"></div>' : ''}
+                    <div class="oh-alert-actions"></div>
+                </div>
+                <div class="oh-alert-close" role="button" tabindex="0" aria-label="ปิด"><i class="fa-solid fa-xmark"></i></div>
+            `;
+            card.querySelector('.oh-alert-title').textContent = o.title || '';
+            if (o.body) card.querySelector('.oh-alert-body').textContent = o.body;
+
+            const actionsHost = card.querySelector('.oh-alert-actions');
+            for (const a of (o.actions || [])) {
+                const btn = document.createElement('div');
+                btn.className = 'menu_button menu_button_icon oh-alert-btn' + (a.primary ? ' primary' : '');
+                btn.innerHTML = a.icon ? `<i class="fa-solid ${a.icon}"></i>` : '';
+                const span = document.createElement('span');
+                span.textContent = a.label;
+                btn.appendChild(span);
+                btn.addEventListener('click', async () => {
+                    btn.classList.add('disabled');
+                    try { await a.run(); } catch (err) { Core.toast('error', err?.message || String(err)); }
+                    finally { this.dismiss(card); }
+                });
+                actionsHost.appendChild(btn);
+            }
+            if (!actionsHost.children.length) actionsHost.remove();
+
+            const close = () => this.dismiss(card);
+            card.querySelector('.oh-alert-close')?.addEventListener('click', close);
+            card.querySelector('.oh-alert-close')?.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') close();
+            });
+
+            host.appendChild(card);
+            requestAnimationFrame(() => card.classList.add('in'));
+
+            const ttl = o.ttl ?? (o.actions?.length ? 0 : 9000);
+            if (ttl > 0) setTimeout(close, ttl);
+            return card;
+        },
+
+        dismiss(card) {
+            if (!card?.isConnected) return;
+            card.classList.remove('in');
+            setTimeout(() => card.remove(), 180);
+        },
+
+        clear(key) {
+            if (key) {
+                this.host?.querySelector(`.oh-alert[data-key="${CSS.escape(key)}"]`)?.remove();
+                this.shown.delete(key);
+            } else {
+                this.host?.replaceChildren();
+                this.shown.clear();
+            }
+        },
+    };
+
+    const PatchNotice = {
+        parseVersion(value) {
+            const match = String(value || '').match(/(?:^|[^\d])v?(\d+)\.(\d+)(?:\.(\d+))?/i);
+            return match ? [Number(match[1]), Number(match[2]), Number(match[3] || 0)] : null;
+        },
+
+        compare(a, b) {
+            for (let i = 0; i < 3; i += 1) {
+                const delta = (a?.[i] || 0) - (b?.[i] || 0);
+                if (delta) return Math.sign(delta);
+            }
+            return 0;
+        },
+
+        show({ level, title, body, primary = false }) {
+            return Alerts.show({
+                key: 'patch-status',
+                level,
+                cooldown: 0,
+                ttl: 0,
+                title,
+                body,
+                actions: [{
+                    label: 'ดูต้นโพสต์ Discord',
+                    icon: 'fa-arrow-up-right-from-square',
+                    primary,
+                    run: () => window.open(PATCH_NOTICE.sourceUrl, '_blank', 'noopener,noreferrer'),
+                }],
+            });
+        },
+
+        async check() {
+            if (!PATCH_NOTICE?.id || !PATCH_NOTICE?.version || !PATCH_NOTICE?.sourceUrl) return null;
+            try {
+                const preset = await Prompts.getOaiName();
+                const current = this.parseVersion(preset);
+                const latest = this.parseVersion(PATCH_NOTICE.version);
+                const isOmega = /omega/i.test(String(preset || ''));
+                const commonBody = `กำลังใช้: ${preset || 'ไม่ทราบชื่อ'}\nOmega ล่าสุด: ${PATCH_NOTICE.fileName}`;
+
+                if (!current || !latest) {
+                    return this.show({
+                        level: 'info',
+                        title: `มีประกาศแพตช์: ${PATCH_NOTICE.title}`,
+                        body: `${commonBody}\nอ่านเลขเวอร์ชันจากชื่อ preset ปัจจุบันไม่ได้`,
+                    });
+                }
+
+                const relation = this.compare(current, latest);
+                if (isOmega && relation < 0) {
+                    return this.show({
+                        level: 'warn', primary: true,
+                        title: `Omega ที่ใช้อยู่เก่ากว่า ${PATCH_NOTICE.version}`,
+                        body: `${commonBody}\nควรดาวน์โหลดแพตช์ใหม่แล้วเปิดแชตใหม่`,
+                    });
+                }
+                if (isOmega && relation === 0) {
+                    return this.show({
+                        level: 'ok',
+                        title: `Omega ${PATCH_NOTICE.version} เป็นเวอร์ชันล่าสุดแล้ว`,
+                        body: commonBody,
+                    });
+                }
+                if (isOmega && relation > 0) {
+                    return this.show({
+                        level: 'info',
+                        title: 'Omega ที่ใช้อยู่ใหม่กว่าประกาศล่าสุด',
+                        body: `${commonBody}\nยังไม่ต้องย้อนกลับไปใช้เวอร์ชันเก่า`,
+                    });
+                }
+
+                const relationText = relation > 0 ? 'ใหม่กว่า' : (relation < 0 ? 'เก่ากว่า' : 'เท่ากับ');
+                return this.show({
+                    level: relation < 0 ? 'warn' : 'info',
+                    title: `JB ปัจจุบัน ${relationText} Omega ${PATCH_NOTICE.version}`,
+                    body: `${commonBody}\nเปรียบเทียบจากเลขเวอร์ชันในชื่อ preset`,
+                    primary: relation < 0,
+                });
+            } catch (err) {
+                console.warn(LOG, 'ตรวจเวอร์ชัน JB/Omega ไม่สำเร็จ', err);
+                return null;
+            }
+        },
+    };
+
+    // -----------------------------------------------------------------------
+    // Doctor — Reasoning Formatting vs current model
+    // -----------------------------------------------------------------------
+    const Doctor = {
+        puMod: null,
+        async powerUser() {
+            if (!this.puMod) this.puMod = await import('/scripts/power-user.js');
+            return this.puMod?.power_user || null;
+        },
+
+        async currentModel() {
+            try {
+                const mod = await Prompts.load();
+                const m = mod?.getChatCompletionModel?.();
+                if (m) return String(m);
+                return String(mod?.oai_settings?.google_model || '');
+            } catch (_) { return ''; }
+        },
+
+        /**
+         * Which rule applies to a model id.
+         * @returns {{rule:object|null, why:string}}
+         */
+        classify(model) {
+            const m = String(model || '').toLowerCase();
+            if (!m) return { rule: null, why: 'ไม่รู้จักโมเดล' };
+            if (!m.includes('gemini')) return { rule: null, why: 'ไม่ใช่ Gemini — ข้ามการเช็ค' };
+
+            // family version, e.g. gemini-3.6-flash → 3.6
+            const ver = parseFloat((m.match(/gemini[-_ ]?(\d+(?:\.\d+)?)/) || [])[1] ?? 'NaN');
+            const isLite = /flash[-_ ]?lite/.test(m);
+
+            if (!Number.isFinite(ver)) return { rule: null, why: 'อ่านเวอร์ชันไม่ออก' };
+            // 3.6+ (any variant) และ 3.5 flash-lite = ไม่ prefill
+            if (ver >= 3.6) return { rule: MODEL_RULES.noPrefill, why: `gemini ${ver}` };
+            if (ver >= 3.5 && isLite) return { rule: MODEL_RULES.noPrefill, why: `gemini ${ver} flash-lite` };
+            // 3.5 flash / 3.1 pro ลงมา = prefill
+            return { rule: MODEL_RULES.prefill, why: `gemini ${ver}` };
+        },
+
+        /** Read live Reasoning Formatting + Start Reply With state. */
+        async readState() {
+            const pu = await this.powerUser();
+            const r = pu?.reasoning || {};
+            return {
+                pu,
+                prefix: String(r.prefix ?? ''),
+                suffix: String(r.suffix ?? ''),
+                autoParse: !!r.auto_parse,
+                startReplyWith: String(pu?.user_prompt_bias ?? ''),
+                showPrefix: !!pu?.show_user_prompt_bias,
+            };
+        },
+
+        /**
+         * @returns {Promise<{model:string, rule:object|null, why:string, issues:Array<{id:string,msg:string,fixable:boolean}>, state:object}>}
+         */
+        /** Omega / 5EX only — other presets don't use the planning block. */
+        async isSupportedPreset() {
+            const name = await Prompts.getOaiName();
+            return { name: name || '', supported: SUPPORTED_PRESET.test(name || '') };
+        },
+
+        async check() {
+            const model = await this.currentModel();
+            const { rule, why } = this.classify(model);
+            const state = await this.readState();
+            const preset = await this.isSupportedPreset();
+            const issues = [];
+
+            // not an Omega/5EX preset → this whole feature does not apply
+            if (!preset.supported) {
+                return { model, rule: null, why: `preset ${preset.name || '(ไม่รู้)'} ไม่ใช่ Omega/5EX — ข้าม`, issues, state, preset };
+            }
+
+            // both fields must literally be <planning> / </planning>
+            if (state.prefix !== REASONING_TEMPLATE.prefix || state.suffix !== REASONING_TEMPLATE.suffix) {
+                issues.push({
+                    id: 'template',
+                    msg: `Reasoning Formatting ต้องเป็น ${REASONING_TEMPLATE.prefix} / ${REASONING_TEMPLATE.suffix} (ตอนนี้: ${state.prefix || 'ว่าง'} / ${state.suffix || 'ว่าง'})`,
+                    fixable: true,
+                });
+            }
+            if (!state.autoParse) {
+                issues.push({
+                    id: 'autoParse',
+                    msg: 'Auto-Parse ปิดอยู่ — ST จะไม่ตัด reasoning block ออกจากข้อความ',
+                    fixable: true,
+                });
+            }
+
+            if (rule) {
+                // always the canonical tag, never whatever is currently typed in the field
+                const want = rule.startReplyWith === 'prefix' ? REASONING_TEMPLATE.prefix : '';
+                const have = state.startReplyWith.trim();
+                if (want && have !== want) {
+                    issues.push({
+                        id: 'srwMissing',
+                        msg: `โมเดลนี้ต้องใส่ "${want}" ใน Start Reply With (ตอนนี้: ${have || 'ว่าง'})`,
+                        fixable: true,
+                    });
+                }
+                if (!want && have) {
+                    issues.push({
+                        id: 'srwExtra',
+                        msg: `โมเดลนี้ต้องเอา "${have}" ออกจาก Start Reply With`,
+                        fixable: true,
+                    });
+                }
+                if (state.showPrefix !== rule.showPrefix) {
+                    issues.push({
+                        id: 'showPrefix',
+                        msg: `Show reply prefix in chat ควร${rule.showPrefix ? 'ติ๊ก' : 'เอาติ๊กออก'}`,
+                        fixable: true,
+                    });
+                }
+            }
+
+            return { model, rule, why, issues, state, preset };
+        },
+
+        /** Apply the rule for the current model. */
+        async fix() {
+            const { rule, state, model, preset } = await this.check();
+            if (!preset?.supported) throw new Error(`preset ${preset?.name || ''} ไม่ใช่ Omega/5EX`);
+            if (!rule) throw new Error(`ไม่มีกฎสำหรับโมเดล ${model || '(ไม่รู้)'}`);
+            const pu = state.pu;
+            if (!pu) throw new Error('เข้าถึง power_user ไม่ได้');
+
+            // template is fixed for both model rules
+            pu.reasoning.prefix = REASONING_TEMPLATE.prefix;
+            pu.reasoning.suffix = REASONING_TEMPLATE.suffix;
+            pu.reasoning.auto_parse = true;
+
+            const srw = rule.startReplyWith === 'prefix' ? REASONING_TEMPLATE.prefix : '';
+            pu.user_prompt_bias = srw;
+            pu.show_user_prompt_bias = rule.showPrefix;
+
+            // mirror the native controls (they are the source of truth for the user)
+            try {
+                $('#reasoning_prefix').val(REASONING_TEMPLATE.prefix);
+                $('#reasoning_suffix').val(REASONING_TEMPLATE.suffix);
+                $('#start_reply_with').val(srw);
+                $('#chat-show-reply-prefix-checkbox').prop('checked', rule.showPrefix);
+                $('#reasoning_auto_parse').prop('checked', true);
+            } catch (_) {}
+
+            Core.getContext()?.saveSettingsDebounced?.();
+            await Engine.reloadChatIfNeeded(true);
+            return rule;
+        },
+
+        /** Check + popup. Silent when everything is fine. */
+        async audit({ quiet = true, cooldown } = {}) {
+            const st = Core.getSettings();
+            if (!st.enabled || !st.checkFormatting) return null;
+            let res;
+            try { res = await this.check(); } catch (_) { return null; }
+            if (!res.issues.length) {
+                Alerts.clear('doctor');
+                if (!quiet) {
+                    Alerts.show({
+                        key: 'doctor-ok', level: 'ok', cooldown: 0, ttl: 5000,
+                        title: 'Reasoning Formatting ถูกต้อง',
+                        body: `${res.model || 'model'} · ${res.rule?.label || res.why}`,
+                    });
+                }
+                return res;
+            }
+
+            if (st.autoFixFormatting && res.issues.every((i) => i.fixable)) {
+                try {
+                    await this.fix();
+                    Alerts.show({
+                        key: 'doctor-autofix', level: 'ok', ttl: 6000, cooldown: 5000,
+                        title: 'ปรับ Reasoning Formatting ให้ตรงโมเดลแล้ว',
+                        body: `${res.model} → ${res.rule?.label || ''}`,
+                    });
+                    return res;
+                } catch (_) { /* fall through to popup */ }
+            }
+
+            const fixable = res.issues.some((i) => i.fixable);
+            Alerts.show({
+                key: 'doctor',
+                level: 'warn',
+                cooldown: cooldown ?? 60000,
+                ttl: 0,
+                title: `ตั้งค่า Reasoning ไม่ตรงกับ ${res.model || 'โมเดลปัจจุบัน'}`,
+                body: `${res.rule?.label || res.why}\n· ${res.issues.map((i) => i.msg).join('\n· ')}`,
+                actions: [
+                    ...(fixable ? [{ label: 'แก้ให้เลย', icon: 'fa-wand-magic-sparkles', primary: true, run: () => this.fix() }] : []),
+                    { label: 'เปิดแผง', icon: 'fa-sliders', run: () => Panel.show() },
+                ],
+            });
+            return res;
+        },
+    };
+
+    // -----------------------------------------------------------------------
+    // Watch — truncated reasoning block / regex leak in the last message
+    // -----------------------------------------------------------------------
+    const Watch = {
+        /**
+         * @param {string} text message text
+         * @param {{prefix:string,suffix:string}} tpl
+         */
+        inspect(text, tpl) {
+            const msg = String(text || '');
+            const problems = [];
+            const prefix = tpl.prefix || '';
+            const suffix = tpl.suffix || '';
+
+            if (prefix && suffix) {
+                const opens = msg.split(prefix).length - 1;
+                const closes = msg.split(suffix).length - 1;
+                // ST strips a parsed block; anything left means the block never closed
+                if (opens > closes) {
+                    problems.push({
+                        id: 'thinkUnclosed',
+                        msg: `พบ ${prefix} ไม่ปิดด้วย ${suffix} (${opens} เปิด / ${closes} ปิด) — reasoning ค้างอยู่ในข้อความ`,
+                    });
+                } else if (opens && opens === closes) {
+                    problems.push({
+                        id: 'thinkNotParsed',
+                        msg: `${prefix}…${suffix} ยังโชว์ในข้อความ — Auto-Parse หรือ template ไม่ตรง`,
+                    });
+                }
+            }
+
+            // Unclosed Omega UI blocks → regex ตัดไม่ครบ
+            const tags = new Map();
+            for (const m of msg.matchAll(/<\s*(\/?)\s*([A-Za-z][\w:-]{1,40})[^>]*?(\/?)\s*>/g)) {
+                const [, slash, rawName, selfClose] = m;
+                const name = rawName.toLowerCase();
+                if (HTML_TAGS.has(name) || selfClose) continue;
+                const cur = tags.get(name) || { open: 0, close: 0, raw: rawName };
+                if (slash) cur.close += 1; else cur.open += 1;
+                tags.set(name, cur);
+            }
+            const dangling = [...tags.entries()]
+                .filter(([, v]) => v.open !== v.close)
+                .map(([, v]) => v.raw);
+            if (dangling.length) {
+                problems.push({
+                    id: 'blockUnclosed',
+                    msg: `แท็กไม่ครบคู่: ${dangling.slice(0, 5).join(', ')} — regex อาจ render/ตัดไม่ครบ`,
+                });
+            }
+            return problems;
+        },
+
+        async lastMessage() {
+            const ctx = Core.getContext();
+            const chat = ctx?.chat;
+            if (!Array.isArray(chat) || !chat.length) return null;
+            for (let i = chat.length - 1; i >= 0; i -= 1) {
+                const m = chat[i];
+                if (m && !m.is_user && !m.is_system) return m;
+            }
+            return null;
+        },
+
+        async run() {
+            const st = Core.getSettings();
+            if (!st.enabled || !st.watchReasoning) return null;
+            // Omega/5EX only
+            if (!(await Doctor.isSupportedPreset()).supported) return null;
+            const msg = await this.lastMessage();
+            if (!msg) return null;
+
+            // template is fixed, so a broken think is detectable without reading settings
+            const problems = this.inspect(msg.mes, REASONING_TEMPLATE);
+            if (!problems.length) {
+                Alerts.clear('watch');
+                return [];
+            }
+            Alerts.show({
+                key: 'watch',
+                level: 'warn',
+                ttl: 0,
+                cooldown: 0, // think broken → pop immediately, every time
+                title: 'Reasoning / regex ไม่ครบในข้อความล่าสุด',
+                body: problems.map((p) => `· ${p.msg}`).join('\n'),
+                actions: [
+                    { label: 'แก้ตั้งค่าให้เลย', icon: 'fa-wand-magic-sparkles', primary: true, run: () => Doctor.fix() },
+                    { label: 'เช็คตั้งค่า', icon: 'fa-stethoscope', run: () => Doctor.audit({ quiet: false, cooldown: 0 }) },
+                ],
+            });
+            return problems;
+        },
+    };
+
     const Panel = {
         isOpen: false,
         root: null,
         search: '',
         cache: null,
         _onKey: null,
+        _searchTimer: null,
 
         async show() {
             if (this.isOpen) {
@@ -776,6 +1278,13 @@
         close() {
             if (!this.isOpen) return;
             this.isOpen = false;
+            if (this._searchTimer) {
+                clearTimeout(this._searchTimer);
+                this._searchTimer = null;
+                const s = Core.getSettings();
+                s.lastSearch = this.search;
+                Core.saveSettings();
+            }
             if (this._onKey) {
                 document.removeEventListener('keydown', this._onKey);
                 this._onKey = null;
@@ -806,11 +1315,14 @@
                     </div>
                     <div id="oh-panel-body">
                         <div class="oh-tabs" role="tablist">
-                            <div class="oh-tab active" data-tab="features" role="tab" title="ฟีเจอร์ JB + Regex">ฟีเจอร์ (JB+Regex)</div>
-                            <div class="oh-tab" data-tab="regex" role="tab" title="Regex ล้วน">Regex ล้วน</div>
+                            <div class="oh-tab active" data-tab="features" role="tab" title="Prompt ตามหมวดใน preset">Prompt</div>
+                            <div class="oh-tab" data-tab="regex" role="tab" title="Regex ของ preset/global/scoped">Regex</div>
                         </div>
                         <div class="oh-toolbar">
-                            <input type="search" id="oh-search" class="text_pole" placeholder="ค้นหา..." enterkeyhint="search" autocomplete="off" />
+                            <label class="oh-search-box" for="oh-search">
+                                <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
+                                <input type="search" id="oh-search" class="text_pole" placeholder="ค้นหาฟีเจอร์หรือ Regex..." enterkeyhint="search" autocomplete="off" />
+                            </label>
                             <select id="oh-profile-select" class="text_pole" title="โปรไฟล์"></select>
                         </div>
                         <div class="oh-toolbar oh-profile-actions">
@@ -821,10 +1333,12 @@
                             <div class="menu_button menu_button_icon" id="oh-refresh" title="รีเฟรช"><i class="fa-solid fa-rotate"></i></div>
                         </div>
                         <p class="oh-status" id="oh-status">กำลังโหลด...</p>
+                        <p class="oh-status oh-doctor-line" id="oh-doctor-line" hidden></p>
                         <div id="oh-content"></div>
                     </div>
                     <div id="oh-panel-footer">
                         <div class="menu_button menu_button_icon" id="oh-allow-preset"><i class="fa-solid fa-unlock"></i><span>Allow preset regex</span></div>
+                        <div class="menu_button menu_button_icon" id="oh-doctor" title="เช็ค Reasoning Formatting กับโมเดลปัจจุบัน"><i class="fa-solid fa-stethoscope"></i><span>เช็ค Reasoning</span></div>
                         <div class="menu_button menu_button_icon" id="oh-open-pm" title="เลื่อนไป Prompt Manager"><i class="fa-solid fa-list-check"></i><span>Prompt Manager</span></div>
                         <div class="menu_button menu_button_icon" id="oh-open-native"><i class="fa-solid fa-code"></i><span>Regex เต็ม</span></div>
                     </div>
@@ -860,10 +1374,16 @@
                 searchEl.value = this.search;
                 searchEl.addEventListener('input', (e) => {
                     this.search = e.target.value || '';
-                    const s = Core.getSettings();
-                    s.lastSearch = this.search;
-                    Core.saveSettings();
-                    this.render();
+                    // A short debounce avoids rebuilding a long prompt/regex list
+                    // for every keystroke on low-end phones.
+                    clearTimeout(this._searchTimer);
+                    this._searchTimer = setTimeout(() => {
+                        this._searchTimer = null;
+                        const s = Core.getSettings();
+                        s.lastSearch = this.search;
+                        Core.saveSettings();
+                        this.render();
+                    }, 140);
                 });
             }
 
@@ -911,7 +1431,13 @@
                     await this.refresh();
                 } catch (err) { Core.toast('error', err?.message || String(err)); }
             });
-            overlay.querySelector('#oh-open-pm')?.addEventListener('click', () => {
+            overlay.querySelector('#oh-doctor')?.addEventListener('click', async () => {
+                await Doctor.audit({ quiet: false, cooldown: 0 });
+                await this.refreshDoctorLine();
+            });
+            overlay.querySelector('#oh-open-pm')?.addEventListener('click', async () => {
+                try { await (await Prompts.getManager())?.render?.(false); } catch (_) {}
+                this.close();
                 try {
                     document.getElementById('leftNavDrawerIcon')?.click?.();
                 } catch (_) {}
@@ -965,22 +1491,31 @@
                 const resolved = await Features.resolve();
                 const allow = await Engine.isPresetAllowed();
                 const oai = await Prompts.getOaiName();
-                this.cache = { ...resolved, allow, oai };
+                const required = RequiredPrompts.inspect(resolved.promptPool);
+                this.cache = { ...resolved, allow, oai, required };
 
                 const onFeats = resolved.packs.filter((p) => p.state === 'on').length;
                 const partial = resolved.packs.filter((p) => p.state === 'partial').length;
                 const parts = [
                     `${resolved.packs.length} ฟีเจอร์`,
                     `${onFeats} เปิด`,
-                    partial ? `${partial} ครึ่ง` : null,
+                    partial ? `${partial} รายการรอเปิดให้ครบ` : null,
+                    required.total ? `Sigil ${required.on}/${required.total}` : null,
                     oai || null,
                     `${resolved.regexAll.length} regex`,
                 ].filter(Boolean);
 
                 if (status) {
-                    if (resolved.regexAll.some((e) => e.typeName === 'preset') && !allow.allowed) {
+                    if ((required.off.length > 0 && SUPPORTED_PRESET.test(String(oai || '')))
+                        || (resolved.regexAll.some((e) => e.typeName === 'preset') && !allow.allowed)) {
                         status.className = 'oh-status warn';
-                        status.textContent = `${parts.join(' · ')} — ยังไม่ allow preset regex`;
+                        const warnings = [
+                            required.off.length ? `Sigil core ปิดอยู่ ${required.off.length}` : null,
+                            resolved.regexAll.some((e) => e.typeName === 'preset') && !allow.allowed
+                                ? 'ยังไม่ allow preset regex'
+                                : null,
+                        ].filter(Boolean);
+                        status.textContent = `${parts.join(' · ')} — ${warnings.join(' · ')}`;
                     } else {
                         status.className = 'oh-status ok';
                         status.textContent = parts.join(' · ');
@@ -990,12 +1525,35 @@
                 if (meta) meta.textContent = `${onFeats}/${resolved.packs.length}`;
                 this.fillProfiles();
                 this.render();
+                this.refreshDoctorLine();
             } catch (err) {
                 console.error(LOG, err);
                 if (status) {
                     status.className = 'oh-status warn';
                     status.textContent = `โหลดไม่สำเร็จ: ${err?.message || err}`;
                 }
+            }
+        },
+
+        async refreshDoctorLine() {
+            const line = this.root?.querySelector('#oh-doctor-line');
+            if (!line) return;
+            const st = Core.getSettings();
+            if (!st.checkFormatting) { line.hidden = true; return; }
+            let res;
+            try { res = await Doctor.check(); } catch (_) { line.hidden = true; return; }
+            line.hidden = false;
+            if (!res.rule) {
+                line.className = 'oh-status oh-doctor-line';
+                line.textContent = `Reasoning: ${res.why}`;
+                return;
+            }
+            if (res.issues.length) {
+                line.className = 'oh-status oh-doctor-line warn';
+                line.textContent = `Reasoning ${res.model}: ${res.issues.length} จุดไม่ตรง — ${res.rule.label}`;
+            } else {
+                line.className = 'oh-status oh-doctor-line ok';
+                line.textContent = `Reasoning ${res.model}: ตรงตาม ${res.rule.label}`;
             }
         },
 
@@ -1011,6 +1569,111 @@
             if (!host) return;
             if (this.currentTab() === 'regex') this.renderRegex(host);
             else this.renderFeatures(host);
+        },
+
+        packSubHtml(pack) {
+            const order = Number.isFinite(pack.orderIndex) ? `ลำดับ ${pack.orderIndex + 1}` : 'Prompt';
+            return `<span class="oh-badge prompt">Prompt</span> · ${order}`;
+        },
+
+        syncPackRow(row, pack) {
+            row.className = `oh-row is-${pack.state}`;
+            const sub = row.querySelector('.oh-sub');
+            if (sub) sub.innerHTML = this.packSubHtml(pack);
+            const wrap = row.querySelector('.oh-toggle-wrap');
+            const lab = row.querySelector('.oh-toggle');
+            const input = row.querySelector('.oh-toggle input');
+            const text = row.querySelector('.oh-toggle-text');
+            const modeLabel = 'Prompt นี้';
+            wrap?.classList.remove('is-on', 'is-off', 'is-partial');
+            wrap?.classList.add(`is-${pack.state}`);
+            lab?.classList.remove('is-on', 'is-off', 'is-partial', 'busy');
+            lab?.classList.add(`is-${pack.state}`);
+            if (lab) {
+                lab.title = pack.state === 'partial'
+                    ? `เปิด ${modeLabel} ที่เหลือให้ครบ`
+                    : `${pack.state === 'on' ? 'ปิด' : 'เปิด'} ${modeLabel}`;
+                lab.setAttribute('aria-label', lab.title);
+            }
+            if (input) {
+                input.checked = pack.state === 'on';
+                input.indeterminate = pack.state === 'partial';
+                input.disabled = false;
+            }
+            if (text) {
+                text.textContent = pack.state === 'partial' ? 'เปิดให้ครบ'
+                    : (pack.state === 'on' ? 'เปิด' : 'ปิด');
+            }
+        },
+
+        updateFeatureMeta() {
+            const packs = this.cache?.packs || [];
+            const meta = this.root?.querySelector('#oh-header-meta');
+            if (meta) meta.textContent = `${packs.filter((pack) => pack.state === 'on').length}/${packs.length}`;
+        },
+
+        openPromptEditor(pack) {
+            const prompt = pack?.prompts?.[0];
+            if (!prompt?.editable) return Core.toast('info', 'รายการนี้เป็น Prompt ระบบ จึงแก้ไขจากหน้านี้ไม่ได้');
+            this.root?.querySelector('.oh-prompt-editor')?.remove();
+            const editor = document.createElement('div');
+            editor.className = 'oh-prompt-editor';
+            editor.innerHTML = `
+                <form class="oh-prompt-editor-card" aria-label="แก้ไข ${Core.escape(prompt.name)}">
+                    <div class="oh-prompt-editor-head">
+                        <div><b>แก้ไข Custom Prompt</b><small>${Core.escape(pack.section.title)}</small></div>
+                        <button type="button" class="menu_button menu_button_icon oh-prompt-editor-close" aria-label="ยกเลิก" title="ยกเลิก"><i class="fa-solid fa-xmark"></i></button>
+                    </div>
+                    <label>ชื่อ Prompt<input class="text_pole" name="name" required maxlength="160"></label>
+                    <label>เนื้อหา Prompt<textarea class="text_pole" name="content" required rows="9"></textarea></label>
+                    <div class="oh-prompt-editor-options">
+                        <label>Role<select class="text_pole" name="role"><option value="system">System</option><option value="user">User</option><option value="assistant">Assistant</option></select></label>
+                    </div>
+                    <div class="oh-prompt-editor-actions">
+                        <button type="button" class="menu_button oh-prompt-editor-cancel">ยกเลิก</button>
+                        <button type="submit" class="menu_button oh-prompt-editor-save"><i class="fa-solid fa-floppy-disk"></i> บันทึก</button>
+                    </div>
+                </form>
+            `;
+            this.root?.querySelector('#oh-panel')?.appendChild(editor);
+            const nameInput = editor.querySelector('input[name="name"]');
+            const contentInput = editor.querySelector('textarea[name="content"]');
+            const roleInput = editor.querySelector('select[name="role"]');
+            if (nameInput) nameInput.value = prompt.name;
+            if (contentInput) contentInput.value = prompt.content;
+            if (roleInput) roleInput.value = prompt.role;
+            const close = () => editor.remove();
+            editor.addEventListener('click', (event) => { if (event.target === editor) close(); });
+            editor.querySelector('.oh-prompt-editor-close')?.addEventListener('click', close);
+            editor.querySelector('.oh-prompt-editor-cancel')?.addEventListener('click', close);
+            editor.addEventListener('keydown', (event) => {
+                if (event.key === 'Escape') {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    close();
+                }
+            });
+            editor.querySelector('form')?.addEventListener('submit', async (event) => {
+                event.preventDefault();
+                const form = event.currentTarget;
+                const save = form.querySelector('.oh-prompt-editor-save');
+                const data = new FormData(form);
+                if (save) save.disabled = true;
+                try {
+                    const updated = await Prompts.update(prompt.identifier, {
+                        name: data.get('name'),
+                        content: data.get('content'),
+                        role: data.get('role'),
+                    });
+                    close();
+                    Core.toast('success', `บันทึก “${updated.name}” แล้ว`);
+                    await this.refresh();
+                } catch (err) {
+                    Core.toast('error', err?.message || String(err));
+                    if (save) save.disabled = false;
+                }
+            });
+            setTimeout(() => contentInput?.focus(), 0);
         },
 
         renderFeatures(host) {
@@ -1041,35 +1704,46 @@
 
                 const onCount = items.filter((i) => i.state === 'on').length;
                 const collapsed = !!st.collapsedGroups['f:' + g.id] && !q;
-                const isRadio = !!g.meta.radio && st.radioMode !== false;
                 const section = document.createElement('div');
-                section.className = 'oh-group' + (collapsed ? ' collapsed' : '') + (isRadio ? ' radio' : '');
+                section.className = 'oh-group' + (collapsed ? ' collapsed' : '');
 
                 const head = document.createElement('div');
                 head.className = 'oh-group-head';
                 head.innerHTML = `
                     <div class="oh-group-title">
                         <b><i class="fa-solid ${Core.escape(g.meta.icon)}"></i> ${Core.escape(g.meta.title)}</b>
-                        <small>${onCount}/${items.length} เปิดเต็ม · ${isRadio ? 'เลือกได้ 1 อย่าง' : 'sync prompt+regex'}</small>
+                        <small>${onCount}/${items.length} เปิด · ตามลำดับใน preset</small>
                     </div>
                     <div class="oh-group-actions">
-                        ${isRadio ? '' : '<div class="menu_button menu_button_icon oh-g-on" title="เปิดทั้งกลุ่ม"><i class="fa-solid fa-toggle-on"></i></div>'}
+                        <div class="menu_button menu_button_icon oh-g-on" title="เปิดทั้งกลุ่ม"><i class="fa-solid fa-toggle-on"></i></div>
                         <div class="menu_button menu_button_icon oh-g-off" title="ปิดทั้งกลุ่ม"><i class="fa-solid fa-toggle-off"></i></div>
                         <div class="menu_button menu_button_icon oh-g-fold"><i class="fa-solid fa-chevron-${collapsed ? 'down' : 'up'}"></i></div>
                     </div>
                 `;
                 head.querySelector('.oh-g-on')?.addEventListener('click', async (e) => {
                     e.stopPropagation();
+                    const pending = Features.setPacks(g.items, true, {
+                        reload: false,
+                        quiet: false,
+                        label: `ทั้งหมวด ${g.meta.title}`,
+                    });
+                    this.renderFeatures(host);
+                    this.updateFeatureMeta();
                     try {
-                        await Features.setGroup(g.id, true);
-                        await this.refresh();
+                        await pending;
                     } catch (err) { Core.toast('error', err?.message || String(err)); }
                 });
                 head.querySelector('.oh-g-off')?.addEventListener('click', async (e) => {
                     e.stopPropagation();
+                    const pending = Features.setPacks(g.items, false, {
+                        reload: false,
+                        quiet: false,
+                        label: `ทั้งหมวด ${g.meta.title}`,
+                    });
+                    this.renderFeatures(host);
+                    this.updateFeatureMeta();
                     try {
-                        await Features.setGroup(g.id, false);
-                        await this.refresh();
+                        await pending;
                     } catch (err) { Core.toast('error', err?.message || String(err)); }
                 });
                 const fold = () => {
@@ -1089,29 +1763,41 @@
                 for (const pack of items) {
                     shown += 1;
                     const row = document.createElement('div');
-                    row.className = 'oh-row' + (pack.state === 'partial' ? ' partial' : '');
-
-                    const badges = [];
-                    if (pack.prompts.length) badges.push(`<span class="oh-badge prompt">P ${pack.promptOn}/${pack.prompts.length}</span>`);
-                    if (pack.regex.length) badges.push(`<span class="oh-badge regex">R ${pack.regexOn}/${pack.regex.length}</span>`);
-                    if (pack.state === 'partial') badges.push('<span class="oh-badge partial">partial</span>');
-                    if (pack.def.radio) badges.push('<span class="oh-badge radio">1 of N</span>');
-                    if (!pack.prompts.length) badges.push('<span class="oh-badge miss">regex only</span>');
+                    row.className = `oh-row is-${pack.state}`;
 
                     const nameBox = document.createElement('div');
                     nameBox.className = 'oh-name';
-                    const detail = [
-                        ...pack.prompts.map((p) => p.name),
-                        ...pack.regex.map((e) => e.script.scriptName),
-                    ].slice(0, 4).join(' · ');
                     nameBox.innerHTML = `
                         <span class="oh-main">${Core.escape(pack.def.title)}</span>
-                        <span class="oh-sub">${badges.join(' ')} · ${Core.escape(detail)}</span>
+                        <span class="oh-sub">${this.packSubHtml(pack)}</span>
                     `;
 
+                    const editButton = pack.prompts[0]?.editable
+                        ? document.createElement('button')
+                        : null;
+                    if (editButton) {
+                        editButton.type = 'button';
+                        editButton.className = 'menu_button menu_button_icon oh-row-edit';
+                        editButton.title = 'แก้ไข Custom Prompt';
+                        editButton.setAttribute('aria-label', `แก้ไข ${pack.def.title}`);
+                        editButton.innerHTML = '<i class="fa-solid fa-pen"></i>';
+                        editButton.addEventListener('click', () => this.openPromptEditor(pack));
+                    }
+
+                    const toggleWrap = document.createElement('div');
+                    toggleWrap.className = `oh-toggle-wrap is-${pack.state}`;
+                    const stateText = document.createElement('span');
+                    stateText.className = 'oh-toggle-text';
+                    stateText.textContent = pack.state === 'partial' ? 'เปิดให้ครบ'
+                        : (pack.state === 'on' ? 'เปิด' : 'ปิด');
+
                     const lab = document.createElement('label');
-                    lab.className = 'oh-toggle';
-                    lab.title = pack.state === 'on' ? 'เปิดครบ — คลิกเพื่อปิดทั้งคู่' : 'คลิกเพื่อเปิด prompt+regex';
+                    lab.className = `oh-toggle is-${pack.state}`;
+                    const modeLabel = 'Prompt นี้';
+                    lab.title = pack.state === 'partial'
+                        ? `เปิด ${modeLabel} ที่เหลือให้ครบ`
+                        : `${pack.state === 'on' ? 'ปิด' : 'เปิด'} ${modeLabel}`;
+                    lab.setAttribute('aria-label', lab.title);
                     const input = document.createElement('input');
                     input.type = 'checkbox';
                     input.checked = pack.state === 'on';
@@ -1120,27 +1806,57 @@
                     slider.className = 'oh-slider';
                     lab.appendChild(input);
                     lab.appendChild(slider);
+                    toggleWrap.appendChild(lab);
+                    toggleWrap.appendChild(stateText);
+                    stateText.addEventListener('click', () => { if (!input.disabled) input.click(); });
 
                     input.addEventListener('change', async () => {
-                        input.disabled = true;
+                        const previousEnabled = pack.state === 'on';
+                        // Mixed state is always a one-tap "complete setup" action.
+                        const nextEnabled = pack.state === 'partial' ? true : !!input.checked;
+                        input.checked = nextEnabled;
+                        input.indeterminate = false;
+                        // optimistic: state class follows the click before refresh lands
+                        lab.classList.remove('is-on', 'is-off', 'is-partial');
+                        lab.classList.add(nextEnabled ? 'is-on' : 'is-off');
+                        toggleWrap.classList.remove('is-on', 'is-off', 'is-partial');
+                        toggleWrap.classList.add(nextEnabled ? 'is-on' : 'is-off');
+                        row.classList.remove('is-on', 'is-off', 'is-partial');
+                        row.classList.add(nextEnabled ? 'is-on' : 'is-off');
+                        stateText.textContent = nextEnabled ? 'เปิด' : 'ปิด';
                         try {
-                            // partial → full on when user checks
-                            await Features.setPack(pack, !!input.checked, {
-                                reload: true,
-                                quiet: false,
-                                allPacks: this.cache?.packs || null,
-                            });
-                            await this.refresh();
+                            const pending = Features.setPack(pack, nextEnabled, { reload: false, quiet: false });
+                            this.syncPackRow(row, pack);
+                            await pending;
+                            this.syncPackRow(row, pack);
+                            const onNow = items.filter((item) => item.state === 'on').length;
+                            const groupSummary = head.querySelector('.oh-group-title small');
+                            if (groupSummary) {
+                                groupSummary.textContent = `${onNow}/${items.length} เปิด · ตามลำดับใน preset`;
+                            }
+                            this.updateFeatureMeta();
                         } catch (err) {
-                            input.checked = !input.checked;
+                            for (const prompt of pack.prompts) prompt.enabled = previousEnabled;
+                            pack.promptOn = previousEnabled ? pack.prompts.length : 0;
+                            pack.controlledOn = pack.promptOn;
+                            pack.state = previousEnabled ? 'on' : 'off';
+                            input.checked = previousEnabled;
+                            input.indeterminate = false;
+                            lab.classList.remove('is-on', 'is-off');
+                            lab.classList.add(`is-${pack.state}`);
+                            toggleWrap.classList.remove('is-on', 'is-off', 'is-partial');
+                            toggleWrap.classList.add(`is-${pack.state}`);
+                            row.classList.remove('is-on', 'is-off', 'is-partial');
+                            row.classList.add(`is-${pack.state}`);
+                            stateText.textContent = pack.state === 'partial' ? 'เปิดให้ครบ'
+                                : (pack.state === 'on' ? 'เปิด' : 'ปิด');
                             Core.toast('error', err?.message || String(err));
-                        } finally {
-                            input.disabled = false;
                         }
                     });
 
                     row.appendChild(nameBox);
-                    row.appendChild(lab);
+                    if (editButton) row.appendChild(editButton);
+                    row.appendChild(toggleWrap);
                     body.appendChild(row);
                 }
 
@@ -1171,8 +1887,9 @@
             body.className = 'oh-group-body';
             body.style.padding = '4px 0';
             for (const e of items) {
+                const on = !e.script.disabled;
                 const row = document.createElement('div');
-                row.className = 'oh-row';
+                row.className = `oh-row is-${on ? 'on' : 'off'}`;
                 const nameBox = document.createElement('div');
                 nameBox.className = 'oh-name';
                 nameBox.innerHTML = `
@@ -1180,26 +1897,38 @@
                     <span class="oh-sub"><span class="oh-badge ${Core.escape(e.typeName)}">${Core.escape(e.typeName)}</span></span>
                 `;
                 const lab = document.createElement('label');
-                lab.className = 'oh-toggle';
+                lab.className = `oh-toggle is-${on ? 'on' : 'off'}`;
                 const input = document.createElement('input');
                 input.type = 'checkbox';
-                input.checked = !e.script.disabled;
+                input.checked = on;
                 const slider = document.createElement('span');
                 slider.className = 'oh-slider';
                 lab.appendChild(input);
                 lab.appendChild(slider);
                 input.addEventListener('change', async () => {
-                    input.disabled = true;
+                    const previousEnabled = !e.script.disabled;
+                    const nextEnabled = !!input.checked;
+                    lab.classList.remove('is-on', 'is-off');
+                    lab.classList.add(nextEnabled ? 'is-on' : 'is-off');
+                    row.classList.remove('is-on', 'is-off');
+                    row.classList.add(nextEnabled ? 'is-on' : 'is-off');
+                    // Mutates the live regex object synchronously; save is queued.
+                    const pending = Engine.setEnabled([e.script.id], nextEnabled);
                     try {
-                        await Engine.setEnabled([e.script.id], !!input.checked);
-                        await Engine.reloadChatIfNeeded();
-                        Core.toast('success', `${input.checked ? 'เปิด' : 'ปิด'}: ${e.script.scriptName}`);
-                        await this.refresh();
+                        void Engine.reloadChatIfNeeded();
+                        Core.toast('success', `${nextEnabled ? 'เปิด' : 'ปิด'}: ${e.script.scriptName}`);
+                        await pending;
+                        row.className = `oh-row is-${nextEnabled ? 'on' : 'off'}`;
+                        lab.classList.remove('is-on', 'is-off');
+                        lab.classList.add(nextEnabled ? 'is-on' : 'is-off');
                     } catch (err) {
-                        input.checked = !input.checked;
+                        e.script.disabled = previousEnabled ? false : true;
+                        input.checked = previousEnabled;
+                        lab.classList.remove('is-on', 'is-off');
+                        lab.classList.add(`is-${previousEnabled ? 'on' : 'off'}`);
+                        row.classList.remove('is-on', 'is-off');
+                        row.classList.add(`is-${previousEnabled ? 'on' : 'off'}`);
                         Core.toast('error', err?.message || String(err));
-                    } finally {
-                        input.disabled = false;
                     }
                 });
                 row.appendChild(nameBox);
@@ -1237,14 +1966,6 @@
                             <input type="checkbox" id="oh-enabled" ${st.enabled ? 'checked' : ''} />
                             <span>Enable Omega Helper</span>
                         </label>
-                        <label class="checkbox_label" for="oh-sync">
-                            <input type="checkbox" id="oh-sync" ${st.syncMode !== false ? 'checked' : ''} />
-                            <span>Sync ฟีเจอร์ = เปิด/ปิด Chat Completion prompt + regex คู่กัน</span>
-                        </label>
-                        <label class="checkbox_label" for="oh-radio">
-                            <input type="checkbox" id="oh-radio" ${st.radioMode !== false ? 'checked' : ''} />
-                            <span>Radio mode = Engine / Length / Prose / Perspective / Language เลือกได้อย่างละ 1</span>
-                        </label>
                         <label class="checkbox_label" for="oh-quick">
                             <input type="checkbox" id="oh-quick" ${st.showQuickButton ? 'checked' : ''} />
                             <span>ปุ่มลัดข้าง Send</span>
@@ -1257,6 +1978,41 @@
                             <input type="checkbox" id="oh-reload" ${st.reloadChatAfterToggle ? 'checked' : ''} />
                             <span>Reload chat หลังสลับ (อัปเดตการ์ด UI)</span>
                         </label>
+
+                        <div class="inline-drawer wide100p">
+                            <div class="inline-drawer-toggle inline-drawer-header">
+                                <b>แจ้งเตือน / ตรวจ Reasoning</b>
+                                <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+                            </div>
+                            <div class="inline-drawer-content">
+                        <label class="checkbox_label" for="oh-alerts-enabled">
+                            <input type="checkbox" id="oh-alerts-enabled" ${st.alerts ? 'checked' : ''} />
+                                    <span>แจ้งเตือนแบบ popup ในหน้าเว็บ</span>
+                                </label>
+                                <label class="checkbox_label" for="oh-watch">
+                                    <input type="checkbox" id="oh-watch" ${st.watchReasoning ? 'checked' : ''} />
+                                    <span>จับ think/planning ไม่ครบ + แท็ก regex ขาด</span>
+                                </label>
+                                <label class="checkbox_label" for="oh-check-fmt">
+                                    <input type="checkbox" id="oh-check-fmt" ${st.checkFormatting ? 'checked' : ''} />
+                                    <span>เช็ค Reasoning Formatting ให้ตรงโมเดล</span>
+                                </label>
+                                <label class="checkbox_label" for="oh-autofix">
+                                    <input type="checkbox" id="oh-autofix" ${st.autoFixFormatting ? 'checked' : ''} />
+                                    <span>แก้ให้อัตโนมัติ (Start Reply With / prefix in chat)</span>
+                                </label>
+                                <small class="oh-hint">
+                                    ทำงานกับ preset Omega / 5EX เท่านั้น<br>
+                                    Prefix / Suffix = <code>&lt;planning&gt;</code> / <code>&lt;/planning&gt;</code> ทั้งสองแบบ<br>
+                                    gemini 3.5 flash / 3.1 pro ลงมา → Start Reply With = <code>&lt;planning&gt;</code> + ติ๊ก Show reply prefix<br>
+                                    gemini 3.5 flash-lite / 3.6 ขึ้นไป → Start Reply With ว่าง + เอาติ๊กออก
+                                </small>
+                                <div class="flex-container flexGap10 marginTop10">
+                                    <div id="oh-check-now" class="menu_button menu_button_icon"><i class="fa-solid fa-stethoscope"></i><span>เช็คเลย</span></div>
+                                </div>
+                            </div>
+                        </div>
+
                         <div class="flex-container flexGap10 marginTop10">
                             <div id="oh-open-now" class="menu_button menu_button_icon"><i class="fa-solid fa-sliders"></i><span>เปิดแผง</span></div>
                         </div>
@@ -1280,11 +2036,17 @@
                 this.syncQuickButton(s);
                 this.syncWandButton(s);
             });
-            bind('oh-sync', 'syncMode');
-            bind('oh-radio', 'radioMode');
             bind('oh-quick', 'showQuickButton', (s) => this.syncQuickButton(s));
             bind('oh-wand', 'showWandButton', (s) => this.syncWandButton(s));
             bind('oh-reload', 'reloadChatAfterToggle');
+            bind('oh-alerts-enabled', 'alerts', (s) => { if (!s.alerts) Alerts.clear(); });
+            bind('oh-watch', 'watchReasoning', (s) => { if (!s.watchReasoning) Alerts.clear('watch'); });
+            bind('oh-check-fmt', 'checkFormatting', (s) => {
+                if (!s.checkFormatting) Alerts.clear('doctor');
+                else Doctor.audit({ quiet: true, cooldown: 0 });
+            });
+            bind('oh-autofix', 'autoFixFormatting');
+            wrap.querySelector('#oh-check-now')?.addEventListener('click', () => Doctor.audit({ quiet: false, cooldown: 0 }));
             wrap.querySelector('#oh-open-now')?.addEventListener('click', () => Panel.show());
         },
 
@@ -1299,7 +2061,7 @@
             if (!$('#send_form').length) return;
 
             const wrapper = $(`
-                <div id="oh-quick-btn-wrapper" title="Omega Helper — ฟีเจอร์ JB + regex">
+                <div id="oh-quick-btn-wrapper" title="Omega Helper — Prompt + Regex manager">
                     <div id="oh-quick-btn" role="button" tabindex="0" aria-label="Omega Helper">
                         <i class="fa-solid fa-bolt"></i>
                     </div>
@@ -1416,7 +2178,24 @@
                     const title = await Features.setByName(name, enabled);
                     return `${enabled ? 'on' : 'off'}:${title}`;
                 },
-                helpString: 'Toggle feature pack (prompt+regex). /oh-feat Lust off',
+                helpString: 'Toggle a preset prompt by its real name. /oh-feat Lust Score off',
+            });
+            add({
+                name: 'oh-check',
+                callback: async () => {
+                    const res = await Doctor.check();
+                    await Doctor.audit({ quiet: false, cooldown: 0 });
+                    return res.issues.length ? `issues:${res.issues.length}` : 'ok';
+                },
+                helpString: 'เช็ค Reasoning Formatting กับโมเดลปัจจุบัน',
+            });
+            add({
+                name: 'oh-fix',
+                callback: async () => {
+                    const rule = await Doctor.fix();
+                    return `fixed:${rule.id}`;
+                },
+                helpString: 'ปรับ Start Reply With / prefix in chat ให้ตรงโมเดล',
             });
             add({
                 name: 'oh-on',
@@ -1439,11 +2218,74 @@
         }
     }
 
+    /** Debounced, visibility-aware hooks. No polling — event driven only. */
+    function registerWatchers() {
+        const ctx = Core.getContext();
+        const es = ctx?.eventSource;
+        const et = ctx?.event_types || ctx?.eventTypes;
+        if (!es?.on || !et) return;
+
+        // one timer per concern so a message event can't cancel a model-change audit
+        const timers = new Map();
+        const later = (key, ms, fn) => {
+            clearTimeout(timers.get(key));
+            timers.set(key, setTimeout(() => {
+                timers.delete(key);
+                if (document.hidden) return; // no work while tab is hidden
+                fn();
+            }, ms));
+        };
+
+        // no debounce: user wants the popup the moment a think comes back wrong
+        const onMessage = () => later('watch', 0, () => Watch.run());
+        if (et.MESSAGE_RECEIVED) es.on(et.MESSAGE_RECEIVED, onMessage);
+        if (et.MESSAGE_SWIPED) es.on(et.MESSAGE_SWIPED, onMessage);
+        if (et.CHATCOMPLETION_MODEL_CHANGED) {
+            es.on(et.CHATCOMPLETION_MODEL_CHANGED, () => later('doctor', 500, () => {
+                Alerts.clear('doctor');
+                Doctor.audit({ quiet: true, cooldown: 0 });
+                Panel.refreshDoctorLine();
+            }));
+        }
+        if (et.OAI_PRESET_CHANGED_AFTER) {
+            es.on(et.OAI_PRESET_CHANGED_AFTER, async () => {
+                await PatchNotice.check();
+                if (Panel.isOpen) await Panel.refresh();
+            });
+        }
+        if (et.GENERATION_STARTED) {
+            es.on(et.GENERATION_STARTED, async (_type, _opts, dryRun) => {
+                if (dryRun) return;
+                try {
+                    const result = await RequiredPrompts.enforce();
+                    if (result.changed > 0) {
+                        console.info(LOG, `เปิด Sigil core ก่อน generate: ${result.changed}/${result.total}`);
+                        if (Panel.isOpen) await Panel.refresh();
+                    }
+                } catch (err) {
+                    console.warn(LOG, 'เปิด Sigil core ไม่สำเร็จ', err);
+                    Alerts.show({
+                        key: 'required-prompts', level: 'warn', ttl: 0, cooldown: 30000,
+                        title: 'เปิด Sigil core ก่อน generate ไม่สำเร็จ',
+                        body: err?.message || String(err),
+                    });
+                }
+                later('doctor', 0, () => Doctor.audit({ quiet: true }));
+            });
+        }
+        // first audit after settings are live
+        later('doctor', 4000, () => Doctor.audit({ quiet: true }));
+    }
+
     function boot() {
+        if (boot.done || !window.SillyTavern?.getContext) return;
+        boot.done = true;
         UI.injectSettings();
         UI.injectQuickButton();
         UI.injectWandButton();
         registerSlash();
+        registerWatchers();
+        PatchNotice.check();
 
         let tries = 0;
         const timer = setInterval(() => {
@@ -1464,7 +2306,7 @@
             mo.observe(observeTarget, { childList: true, subtree: true });
         } catch (_) {}
 
-        console.log(LOG, `loaded v${VERSION} — feature packs ↔ Chat Completion + regex`);
+        console.log(LOG, `loaded v${VERSION} — preset Prompt order + separate Regex controls`);
     }
 
     function onReady() {
