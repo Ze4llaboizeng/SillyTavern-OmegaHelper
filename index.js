@@ -1,4 +1,4 @@
-/* Omega Helper v1.1.1 — Chat Completion feature packs ↔ preset regex (core ST APIs only) */
+/* Omega Helper v1.2.0 — Chat Completion feature packs ↔ preset regex (core ST APIs only) */
 (() => {
     if (typeof window === 'undefined') { global.window = {}; }
     if (window.__OMEGA_HELPER_LOADED__) return;
@@ -7,7 +7,7 @@
     const MODULE_NAME = 'omegaHelper';
     const EXT_ID = 'omega-helper';
     const LOG = '[OmegaHelper]';
-    const VERSION = '1.1.1';
+    const VERSION = '1.2.0';
 
     const DEFAULTS = {
         enabled: true,
@@ -21,7 +21,48 @@
         lastProfileId: null,
         lastSearch: '',
         activeTab: 'features', // features | regex
+        alerts: true,            // popup notifications
+        watchReasoning: true,    // detect truncated think / missing regex
+        checkFormatting: true,   // check Reasoning Formatting vs model
+        autoFixFormatting: false,
     };
+
+    /** The reasoning template Omega/5EX presets expect. Both fields, both model rules. */
+    const REASONING_TEMPLATE = { prefix: '<planning>', suffix: '</planning>' };
+
+    /** Only these preset families use the planning block. Anything else: stay out. */
+    const SUPPORTED_PRESET = /omega|5\s*ex|5ex/i;
+
+    /**
+     * Reasoning Formatting rules per model family.
+     * prefill  = Start Reply With must hold the reasoning prefix + show prefix in chat ON
+     *            (gemini 3.5 flash / 3.1 pro and older)
+     * noPrefill = Start Reply With empty + show prefix in chat OFF
+     *            (gemini 3.5 flash-lite, 3.6 flash and newer)
+     */
+    const MODEL_RULES = {
+        prefill: {
+            id: 'prefill',
+            label: 'Prefill (3.5 flash / 3.1 pro ลงมา)',
+            startReplyWith: 'prefix',
+            showPrefix: true,
+        },
+        noPrefill: {
+            id: 'noPrefill',
+            label: 'No prefill (3.5 flash-lite / 3.6 flash ขึ้นไป)',
+            startReplyWith: '',
+            showPrefix: false,
+        },
+    };
+
+    /** HTML/markdown tags that are never Omega UI blocks — skip in leak scan */
+    const HTML_TAGS = new Set([
+        'a', 'b', 'br', 'i', 'p', 'em', 'hr', 'li', 'ol', 'ul', 'td', 'th', 'tr', 'h1', 'h2', 'h3',
+        'h4', 'h5', 'h6', 'div', 'img', 'pre', 'sub', 'sup', 'code', 'font', 'span', 'small', 'table',
+        'tbody', 'thead', 'tfoot', 'strong', 'details', 'summary', 'style', 'script', 'blockquote',
+        'button', 'input', 'label', 'select', 'option', 'section', 'header', 'footer', 'figure', 'svg',
+        'path', 'video', 'audio', 'iframe', 'canvas', 'center', 'mark', 'del', 'ins', 'u', 's',
+    ]);
 
     /**
      * Feature packs: keyword match against live Chat Completion prompts + regex names.
@@ -802,12 +843,413 @@
     // -----------------------------------------------------------------------
     // Panel UI
     // -----------------------------------------------------------------------
+    // -----------------------------------------------------------------------
+    // Alerts — web-style popup cards (dedup by key, action buttons)
+    // -----------------------------------------------------------------------
+    const Alerts = {
+        host: null,
+        shown: new Map(), // key -> timestamp
+
+        ensureHost() {
+            if (this.host?.isConnected) return this.host;
+            let el = document.getElementById('oh-alerts');
+            if (!el) {
+                el = document.createElement('div');
+                el.id = 'oh-alerts';
+                el.setAttribute('role', 'status');
+                el.setAttribute('aria-live', 'polite');
+                document.body.appendChild(el);
+            }
+            this.host = el;
+            return el;
+        },
+
+        /**
+         * @param {object} o
+         * @param {string} o.key dedup key
+         * @param {'warn'|'error'|'ok'|'info'} [o.level]
+         * @param {string} o.title
+         * @param {string} [o.body] plain text (escaped)
+         * @param {Array<{label:string, icon?:string, primary?:boolean, run:function}>} [o.actions]
+         * @param {number} [o.ttl] auto-dismiss ms (0 = sticky)
+         * @param {number} [o.cooldown] ms before the same key can re-show
+         */
+        show(o) {
+            const st = Core.getSettings();
+            if (!st.enabled || !st.alerts) return null;
+            const key = o.key || Core.uid();
+            const cooldown = o.cooldown ?? 20000;
+            const last = this.shown.get(key) || 0;
+            if (Date.now() - last < cooldown) return null;
+            this.shown.set(key, Date.now());
+
+            const host = this.ensureHost();
+            host.querySelector(`.oh-alert[data-key="${CSS.escape(key)}"]`)?.remove();
+
+            const card = document.createElement('div');
+            card.className = `oh-alert ${o.level || 'warn'}`;
+            card.dataset.key = key;
+            const icon = { warn: 'fa-triangle-exclamation', error: 'fa-circle-xmark', ok: 'fa-circle-check', info: 'fa-circle-info' }[o.level || 'warn'];
+            card.innerHTML = `
+                <div class="oh-alert-icon"><i class="fa-solid ${icon}"></i></div>
+                <div class="oh-alert-main">
+                    <div class="oh-alert-title"></div>
+                    ${o.body ? '<div class="oh-alert-body"></div>' : ''}
+                    <div class="oh-alert-actions"></div>
+                </div>
+                <div class="oh-alert-close" role="button" tabindex="0" aria-label="ปิด"><i class="fa-solid fa-xmark"></i></div>
+            `;
+            card.querySelector('.oh-alert-title').textContent = o.title || '';
+            if (o.body) card.querySelector('.oh-alert-body').textContent = o.body;
+
+            const actionsHost = card.querySelector('.oh-alert-actions');
+            for (const a of (o.actions || [])) {
+                const btn = document.createElement('div');
+                btn.className = 'menu_button menu_button_icon oh-alert-btn' + (a.primary ? ' primary' : '');
+                btn.innerHTML = a.icon ? `<i class="fa-solid ${a.icon}"></i>` : '';
+                const span = document.createElement('span');
+                span.textContent = a.label;
+                btn.appendChild(span);
+                btn.addEventListener('click', async () => {
+                    btn.classList.add('disabled');
+                    try { await a.run(); } catch (err) { Core.toast('error', err?.message || String(err)); }
+                    finally { this.dismiss(card); }
+                });
+                actionsHost.appendChild(btn);
+            }
+            if (!actionsHost.children.length) actionsHost.remove();
+
+            const close = () => this.dismiss(card);
+            card.querySelector('.oh-alert-close')?.addEventListener('click', close);
+            card.querySelector('.oh-alert-close')?.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') close();
+            });
+
+            host.appendChild(card);
+            requestAnimationFrame(() => card.classList.add('in'));
+
+            const ttl = o.ttl ?? (o.actions?.length ? 0 : 9000);
+            if (ttl > 0) setTimeout(close, ttl);
+            return card;
+        },
+
+        dismiss(card) {
+            if (!card?.isConnected) return;
+            card.classList.remove('in');
+            setTimeout(() => card.remove(), 180);
+        },
+
+        clear(key) {
+            if (key) {
+                this.host?.querySelector(`.oh-alert[data-key="${CSS.escape(key)}"]`)?.remove();
+                this.shown.delete(key);
+            } else {
+                this.host?.replaceChildren();
+                this.shown.clear();
+            }
+        },
+    };
+
+    // -----------------------------------------------------------------------
+    // Doctor — Reasoning Formatting vs current model
+    // -----------------------------------------------------------------------
+    const Doctor = {
+        puMod: null,
+        async powerUser() {
+            if (!this.puMod) this.puMod = await import('/scripts/power-user.js');
+            return this.puMod?.power_user || null;
+        },
+
+        async currentModel() {
+            try {
+                const mod = await Prompts.load();
+                const m = mod?.getChatCompletionModel?.();
+                if (m) return String(m);
+                return String(mod?.oai_settings?.google_model || '');
+            } catch (_) { return ''; }
+        },
+
+        /**
+         * Which rule applies to a model id.
+         * @returns {{rule:object|null, why:string}}
+         */
+        classify(model) {
+            const m = String(model || '').toLowerCase();
+            if (!m) return { rule: null, why: 'ไม่รู้จักโมเดล' };
+            if (!m.includes('gemini')) return { rule: null, why: 'ไม่ใช่ Gemini — ข้ามการเช็ค' };
+
+            // family version, e.g. gemini-3.6-flash → 3.6
+            const ver = parseFloat((m.match(/gemini[-_ ]?(\d+(?:\.\d+)?)/) || [])[1] ?? 'NaN');
+            const isLite = /flash[-_ ]?lite/.test(m);
+
+            if (!Number.isFinite(ver)) return { rule: null, why: 'อ่านเวอร์ชันไม่ออก' };
+            // 3.6+ (any variant) และ 3.5 flash-lite = ไม่ prefill
+            if (ver >= 3.6) return { rule: MODEL_RULES.noPrefill, why: `gemini ${ver}` };
+            if (ver >= 3.5 && isLite) return { rule: MODEL_RULES.noPrefill, why: `gemini ${ver} flash-lite` };
+            // 3.5 flash / 3.1 pro ลงมา = prefill
+            return { rule: MODEL_RULES.prefill, why: `gemini ${ver}` };
+        },
+
+        /** Read live Reasoning Formatting + Start Reply With state. */
+        async readState() {
+            const pu = await this.powerUser();
+            const r = pu?.reasoning || {};
+            return {
+                pu,
+                prefix: String(r.prefix ?? ''),
+                suffix: String(r.suffix ?? ''),
+                autoParse: !!r.auto_parse,
+                startReplyWith: String(pu?.user_prompt_bias ?? ''),
+                showPrefix: !!pu?.show_user_prompt_bias,
+            };
+        },
+
+        /**
+         * @returns {Promise<{model:string, rule:object|null, why:string, issues:Array<{id:string,msg:string,fixable:boolean}>, state:object}>}
+         */
+        /** Omega / 5EX only — other presets don't use the planning block. */
+        async isSupportedPreset() {
+            const name = await Prompts.getOaiName();
+            return { name: name || '', supported: SUPPORTED_PRESET.test(name || '') };
+        },
+
+        async check() {
+            const model = await this.currentModel();
+            const { rule, why } = this.classify(model);
+            const state = await this.readState();
+            const preset = await this.isSupportedPreset();
+            const issues = [];
+
+            // not an Omega/5EX preset → this whole feature does not apply
+            if (!preset.supported) {
+                return { model, rule: null, why: `preset ${preset.name || '(ไม่รู้)'} ไม่ใช่ Omega/5EX — ข้าม`, issues, state, preset };
+            }
+
+            // both fields must literally be <planning> / </planning>
+            if (state.prefix !== REASONING_TEMPLATE.prefix || state.suffix !== REASONING_TEMPLATE.suffix) {
+                issues.push({
+                    id: 'template',
+                    msg: `Reasoning Formatting ต้องเป็น ${REASONING_TEMPLATE.prefix} / ${REASONING_TEMPLATE.suffix} (ตอนนี้: ${state.prefix || 'ว่าง'} / ${state.suffix || 'ว่าง'})`,
+                    fixable: true,
+                });
+            }
+            if (!state.autoParse) {
+                issues.push({
+                    id: 'autoParse',
+                    msg: 'Auto-Parse ปิดอยู่ — ST จะไม่ตัด reasoning block ออกจากข้อความ',
+                    fixable: true,
+                });
+            }
+
+            if (rule) {
+                // always the canonical tag, never whatever is currently typed in the field
+                const want = rule.startReplyWith === 'prefix' ? REASONING_TEMPLATE.prefix : '';
+                const have = state.startReplyWith.trim();
+                if (want && have !== want) {
+                    issues.push({
+                        id: 'srwMissing',
+                        msg: `โมเดลนี้ต้องใส่ "${want}" ใน Start Reply With (ตอนนี้: ${have || 'ว่าง'})`,
+                        fixable: true,
+                    });
+                }
+                if (!want && have) {
+                    issues.push({
+                        id: 'srwExtra',
+                        msg: `โมเดลนี้ต้องเอา "${have}" ออกจาก Start Reply With`,
+                        fixable: true,
+                    });
+                }
+                if (state.showPrefix !== rule.showPrefix) {
+                    issues.push({
+                        id: 'showPrefix',
+                        msg: `Show reply prefix in chat ควร${rule.showPrefix ? 'ติ๊ก' : 'เอาติ๊กออก'}`,
+                        fixable: true,
+                    });
+                }
+            }
+
+            return { model, rule, why, issues, state, preset };
+        },
+
+        /** Apply the rule for the current model. */
+        async fix() {
+            const { rule, state, model, preset } = await this.check();
+            if (!preset?.supported) throw new Error(`preset ${preset?.name || ''} ไม่ใช่ Omega/5EX`);
+            if (!rule) throw new Error(`ไม่มีกฎสำหรับโมเดล ${model || '(ไม่รู้)'}`);
+            const pu = state.pu;
+            if (!pu) throw new Error('เข้าถึง power_user ไม่ได้');
+
+            // template is fixed for both model rules
+            pu.reasoning.prefix = REASONING_TEMPLATE.prefix;
+            pu.reasoning.suffix = REASONING_TEMPLATE.suffix;
+            pu.reasoning.auto_parse = true;
+
+            const srw = rule.startReplyWith === 'prefix' ? REASONING_TEMPLATE.prefix : '';
+            pu.user_prompt_bias = srw;
+            pu.show_user_prompt_bias = rule.showPrefix;
+
+            // mirror the native controls (they are the source of truth for the user)
+            try {
+                $('#reasoning_prefix').val(REASONING_TEMPLATE.prefix);
+                $('#reasoning_suffix').val(REASONING_TEMPLATE.suffix);
+                $('#start_reply_with').val(srw);
+                $('#chat-show-reply-prefix-checkbox').prop('checked', rule.showPrefix);
+                $('#reasoning_auto_parse').prop('checked', true);
+            } catch (_) {}
+
+            Core.getContext()?.saveSettingsDebounced?.();
+            await Engine.reloadChatIfNeeded(true);
+            return rule;
+        },
+
+        /** Check + popup. Silent when everything is fine. */
+        async audit({ quiet = true, cooldown } = {}) {
+            const st = Core.getSettings();
+            if (!st.enabled || !st.checkFormatting) return null;
+            let res;
+            try { res = await this.check(); } catch (_) { return null; }
+            if (!res.issues.length) {
+                Alerts.clear('doctor');
+                if (!quiet) {
+                    Alerts.show({
+                        key: 'doctor-ok', level: 'ok', cooldown: 0, ttl: 5000,
+                        title: 'Reasoning Formatting ถูกต้อง',
+                        body: `${res.model || 'model'} · ${res.rule?.label || res.why}`,
+                    });
+                }
+                return res;
+            }
+
+            if (st.autoFixFormatting && res.issues.every((i) => i.fixable)) {
+                try {
+                    await this.fix();
+                    Alerts.show({
+                        key: 'doctor-autofix', level: 'ok', ttl: 6000, cooldown: 5000,
+                        title: 'ปรับ Reasoning Formatting ให้ตรงโมเดลแล้ว',
+                        body: `${res.model} → ${res.rule?.label || ''}`,
+                    });
+                    return res;
+                } catch (_) { /* fall through to popup */ }
+            }
+
+            const fixable = res.issues.some((i) => i.fixable);
+            Alerts.show({
+                key: 'doctor',
+                level: 'warn',
+                cooldown: cooldown ?? 60000,
+                ttl: 0,
+                title: `ตั้งค่า Reasoning ไม่ตรงกับ ${res.model || 'โมเดลปัจจุบัน'}`,
+                body: `${res.rule?.label || res.why}\n· ${res.issues.map((i) => i.msg).join('\n· ')}`,
+                actions: [
+                    ...(fixable ? [{ label: 'แก้ให้เลย', icon: 'fa-wand-magic-sparkles', primary: true, run: () => this.fix() }] : []),
+                    { label: 'เปิดแผง', icon: 'fa-sliders', run: () => Panel.show() },
+                ],
+            });
+            return res;
+        },
+    };
+
+    // -----------------------------------------------------------------------
+    // Watch — truncated reasoning block / regex leak in the last message
+    // -----------------------------------------------------------------------
+    const Watch = {
+        /**
+         * @param {string} text message text
+         * @param {{prefix:string,suffix:string}} tpl
+         */
+        inspect(text, tpl) {
+            const msg = String(text || '');
+            const problems = [];
+            const prefix = tpl.prefix || '';
+            const suffix = tpl.suffix || '';
+
+            if (prefix && suffix) {
+                const opens = msg.split(prefix).length - 1;
+                const closes = msg.split(suffix).length - 1;
+                // ST strips a parsed block; anything left means the block never closed
+                if (opens > closes) {
+                    problems.push({
+                        id: 'thinkUnclosed',
+                        msg: `พบ ${prefix} ไม่ปิดด้วย ${suffix} (${opens} เปิด / ${closes} ปิด) — reasoning ค้างอยู่ในข้อความ`,
+                    });
+                } else if (opens && opens === closes) {
+                    problems.push({
+                        id: 'thinkNotParsed',
+                        msg: `${prefix}…${suffix} ยังโชว์ในข้อความ — Auto-Parse หรือ template ไม่ตรง`,
+                    });
+                }
+            }
+
+            // Unclosed Omega UI blocks → regex ตัดไม่ครบ
+            const tags = new Map();
+            for (const m of msg.matchAll(/<\s*(\/?)\s*([A-Za-z][\w:-]{1,40})[^>]*?(\/?)\s*>/g)) {
+                const [, slash, rawName, selfClose] = m;
+                const name = rawName.toLowerCase();
+                if (HTML_TAGS.has(name) || selfClose) continue;
+                const cur = tags.get(name) || { open: 0, close: 0, raw: rawName };
+                if (slash) cur.close += 1; else cur.open += 1;
+                tags.set(name, cur);
+            }
+            const dangling = [...tags.entries()]
+                .filter(([, v]) => v.open !== v.close)
+                .map(([, v]) => v.raw);
+            if (dangling.length) {
+                problems.push({
+                    id: 'blockUnclosed',
+                    msg: `แท็กไม่ครบคู่: ${dangling.slice(0, 5).join(', ')} — regex อาจ render/ตัดไม่ครบ`,
+                });
+            }
+            return problems;
+        },
+
+        async lastMessage() {
+            const ctx = Core.getContext();
+            const chat = ctx?.chat;
+            if (!Array.isArray(chat) || !chat.length) return null;
+            for (let i = chat.length - 1; i >= 0; i -= 1) {
+                const m = chat[i];
+                if (m && !m.is_user && !m.is_system) return m;
+            }
+            return null;
+        },
+
+        async run() {
+            const st = Core.getSettings();
+            if (!st.enabled || !st.watchReasoning) return null;
+            // Omega/5EX only
+            if (!(await Doctor.isSupportedPreset()).supported) return null;
+            const msg = await this.lastMessage();
+            if (!msg) return null;
+
+            // template is fixed, so a broken think is detectable without reading settings
+            const problems = this.inspect(msg.mes, REASONING_TEMPLATE);
+            if (!problems.length) {
+                Alerts.clear('watch');
+                return [];
+            }
+            Alerts.show({
+                key: 'watch',
+                level: 'warn',
+                ttl: 0,
+                cooldown: 0, // think broken → pop immediately, every time
+                title: 'Reasoning / regex ไม่ครบในข้อความล่าสุด',
+                body: problems.map((p) => `· ${p.msg}`).join('\n'),
+                actions: [
+                    { label: 'แก้ตั้งค่าให้เลย', icon: 'fa-wand-magic-sparkles', primary: true, run: () => Doctor.fix() },
+                    { label: 'เช็คตั้งค่า', icon: 'fa-stethoscope', run: () => Doctor.audit({ quiet: false, cooldown: 0 }) },
+                ],
+            });
+            return problems;
+        },
+    };
+
     const Panel = {
         isOpen: false,
         root: null,
         search: '',
         cache: null,
         _onKey: null,
+        _searchTimer: null,
 
         async show() {
             if (this.isOpen) {
@@ -822,6 +1264,13 @@
         close() {
             if (!this.isOpen) return;
             this.isOpen = false;
+            if (this._searchTimer) {
+                clearTimeout(this._searchTimer);
+                this._searchTimer = null;
+                const s = Core.getSettings();
+                s.lastSearch = this.search;
+                Core.saveSettings();
+            }
             if (this._onKey) {
                 document.removeEventListener('keydown', this._onKey);
                 this._onKey = null;
@@ -856,7 +1305,10 @@
                             <div class="oh-tab" data-tab="regex" role="tab" title="Regex ล้วน">Regex ล้วน</div>
                         </div>
                         <div class="oh-toolbar">
-                            <input type="search" id="oh-search" class="text_pole" placeholder="ค้นหา..." enterkeyhint="search" autocomplete="off" />
+                            <label class="oh-search-box" for="oh-search">
+                                <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
+                                <input type="search" id="oh-search" class="text_pole" placeholder="ค้นหาฟีเจอร์หรือ Regex..." enterkeyhint="search" autocomplete="off" />
+                            </label>
                             <select id="oh-profile-select" class="text_pole" title="โปรไฟล์"></select>
                         </div>
                         <div class="oh-toolbar oh-profile-actions">
@@ -867,10 +1319,12 @@
                             <div class="menu_button menu_button_icon" id="oh-refresh" title="รีเฟรช"><i class="fa-solid fa-rotate"></i></div>
                         </div>
                         <p class="oh-status" id="oh-status">กำลังโหลด...</p>
+                        <p class="oh-status oh-doctor-line" id="oh-doctor-line" hidden></p>
                         <div id="oh-content"></div>
                     </div>
                     <div id="oh-panel-footer">
                         <div class="menu_button menu_button_icon" id="oh-allow-preset"><i class="fa-solid fa-unlock"></i><span>Allow preset regex</span></div>
+                        <div class="menu_button menu_button_icon" id="oh-doctor" title="เช็ค Reasoning Formatting กับโมเดลปัจจุบัน"><i class="fa-solid fa-stethoscope"></i><span>เช็ค Reasoning</span></div>
                         <div class="menu_button menu_button_icon" id="oh-open-pm" title="เลื่อนไป Prompt Manager"><i class="fa-solid fa-list-check"></i><span>Prompt Manager</span></div>
                         <div class="menu_button menu_button_icon" id="oh-open-native"><i class="fa-solid fa-code"></i><span>Regex เต็ม</span></div>
                     </div>
@@ -906,10 +1360,16 @@
                 searchEl.value = this.search;
                 searchEl.addEventListener('input', (e) => {
                     this.search = e.target.value || '';
-                    const s = Core.getSettings();
-                    s.lastSearch = this.search;
-                    Core.saveSettings();
-                    this.render();
+                    // A short debounce avoids rebuilding a long prompt/regex list
+                    // for every keystroke on low-end phones.
+                    clearTimeout(this._searchTimer);
+                    this._searchTimer = setTimeout(() => {
+                        this._searchTimer = null;
+                        const s = Core.getSettings();
+                        s.lastSearch = this.search;
+                        Core.saveSettings();
+                        this.render();
+                    }, 140);
                 });
             }
 
@@ -956,6 +1416,10 @@
                     Core.toast('success', `Allow: ${r.name}`);
                     await this.refresh();
                 } catch (err) { Core.toast('error', err?.message || String(err)); }
+            });
+            overlay.querySelector('#oh-doctor')?.addEventListener('click', async () => {
+                await Doctor.audit({ quiet: false, cooldown: 0 });
+                await this.refreshDoctorLine();
             });
             overlay.querySelector('#oh-open-pm')?.addEventListener('click', () => {
                 try {
@@ -1036,12 +1500,35 @@
                 if (meta) meta.textContent = `${onFeats}/${resolved.packs.length}`;
                 this.fillProfiles();
                 this.render();
+                this.refreshDoctorLine();
             } catch (err) {
                 console.error(LOG, err);
                 if (status) {
                     status.className = 'oh-status warn';
                     status.textContent = `โหลดไม่สำเร็จ: ${err?.message || err}`;
                 }
+            }
+        },
+
+        async refreshDoctorLine() {
+            const line = this.root?.querySelector('#oh-doctor-line');
+            if (!line) return;
+            const st = Core.getSettings();
+            if (!st.checkFormatting) { line.hidden = true; return; }
+            let res;
+            try { res = await Doctor.check(); } catch (_) { line.hidden = true; return; }
+            line.hidden = false;
+            if (!res.rule) {
+                line.className = 'oh-status oh-doctor-line';
+                line.textContent = `Reasoning: ${res.why}`;
+                return;
+            }
+            if (res.issues.length) {
+                line.className = 'oh-status oh-doctor-line warn';
+                line.textContent = `Reasoning ${res.model}: ${res.issues.length} จุดไม่ตรง — ${res.rule.label}`;
+            } else {
+                line.className = 'oh-status oh-doctor-line ok';
+                line.textContent = `Reasoning ${res.model}: ตรงตาม ${res.rule.label}`;
             }
         },
 
@@ -1134,7 +1621,7 @@
                 for (const pack of items) {
                     shown += 1;
                     const row = document.createElement('div');
-                    row.className = 'oh-row' + (pack.state === 'partial' ? ' partial' : '');
+                    row.className = `oh-row is-${pack.state}`;
 
                     const badges = [];
                     badges.push(`<span class="oh-badge prompt">P ${pack.promptOn}/${pack.prompts.length}</span>`);
@@ -1155,7 +1642,7 @@
                     `;
 
                     const lab = document.createElement('label');
-                    lab.className = 'oh-toggle';
+                    lab.className = `oh-toggle is-${pack.state}`;
                     lab.title = pack.state === 'on' ? 'เปิดครบ — คลิกเพื่อปิดทั้งคู่' : 'คลิกเพื่อเปิด prompt+regex';
                     const input = document.createElement('input');
                     input.type = 'checkbox';
@@ -1168,15 +1655,22 @@
 
                     input.addEventListener('change', async () => {
                         input.disabled = true;
+                        lab.classList.add('busy');
+                        // optimistic: state class follows the click before refresh lands
+                        lab.classList.remove('is-on', 'is-off', 'is-partial');
+                        lab.classList.add(input.checked ? 'is-on' : 'is-off');
                         try {
                             // partial → full on when user checks
                             await Features.setPack(pack, !!input.checked, { reload: true, quiet: false });
                             await this.refresh();
                         } catch (err) {
                             input.checked = !input.checked;
+                            lab.classList.remove('is-on', 'is-off');
+                            lab.classList.add(`is-${pack.state}`);
                             Core.toast('error', err?.message || String(err));
                         } finally {
                             input.disabled = false;
+                            lab.classList.remove('busy');
                         }
                     });
 
@@ -1212,8 +1706,9 @@
             body.className = 'oh-group-body';
             body.style.padding = '4px 0';
             for (const e of items) {
+                const on = !e.script.disabled;
                 const row = document.createElement('div');
-                row.className = 'oh-row';
+                row.className = `oh-row is-${on ? 'on' : 'off'}`;
                 const nameBox = document.createElement('div');
                 nameBox.className = 'oh-name';
                 nameBox.innerHTML = `
@@ -1221,16 +1716,19 @@
                     <span class="oh-sub"><span class="oh-badge ${Core.escape(e.typeName)}">${Core.escape(e.typeName)}</span></span>
                 `;
                 const lab = document.createElement('label');
-                lab.className = 'oh-toggle';
+                lab.className = `oh-toggle is-${on ? 'on' : 'off'}`;
                 const input = document.createElement('input');
                 input.type = 'checkbox';
-                input.checked = !e.script.disabled;
+                input.checked = on;
                 const slider = document.createElement('span');
                 slider.className = 'oh-slider';
                 lab.appendChild(input);
                 lab.appendChild(slider);
                 input.addEventListener('change', async () => {
                     input.disabled = true;
+                    lab.classList.add('busy');
+                    lab.classList.remove('is-on', 'is-off');
+                    lab.classList.add(input.checked ? 'is-on' : 'is-off');
                     try {
                         await Engine.setEnabled([e.script.id], !!input.checked);
                         await Engine.reloadChatIfNeeded();
@@ -1238,9 +1736,12 @@
                         await this.refresh();
                     } catch (err) {
                         input.checked = !input.checked;
+                        lab.classList.remove('is-on', 'is-off');
+                        lab.classList.add(`is-${on ? 'on' : 'off'}`);
                         Core.toast('error', err?.message || String(err));
                     } finally {
                         input.disabled = false;
+                        lab.classList.remove('busy');
                     }
                 });
                 row.appendChild(nameBox);
@@ -1294,6 +1795,41 @@
                             <input type="checkbox" id="oh-reload" ${st.reloadChatAfterToggle ? 'checked' : ''} />
                             <span>Reload chat หลังสลับ (อัปเดตการ์ด UI)</span>
                         </label>
+
+                        <div class="inline-drawer wide100p">
+                            <div class="inline-drawer-toggle inline-drawer-header">
+                                <b>แจ้งเตือน / ตรวจ Reasoning</b>
+                                <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+                            </div>
+                            <div class="inline-drawer-content">
+                        <label class="checkbox_label" for="oh-alerts-enabled">
+                            <input type="checkbox" id="oh-alerts-enabled" ${st.alerts ? 'checked' : ''} />
+                                    <span>แจ้งเตือนแบบ popup ในหน้าเว็บ</span>
+                                </label>
+                                <label class="checkbox_label" for="oh-watch">
+                                    <input type="checkbox" id="oh-watch" ${st.watchReasoning ? 'checked' : ''} />
+                                    <span>จับ think/planning ไม่ครบ + แท็ก regex ขาด</span>
+                                </label>
+                                <label class="checkbox_label" for="oh-check-fmt">
+                                    <input type="checkbox" id="oh-check-fmt" ${st.checkFormatting ? 'checked' : ''} />
+                                    <span>เช็ค Reasoning Formatting ให้ตรงโมเดล</span>
+                                </label>
+                                <label class="checkbox_label" for="oh-autofix">
+                                    <input type="checkbox" id="oh-autofix" ${st.autoFixFormatting ? 'checked' : ''} />
+                                    <span>แก้ให้อัตโนมัติ (Start Reply With / prefix in chat)</span>
+                                </label>
+                                <small class="oh-hint">
+                                    ทำงานกับ preset Omega / 5EX เท่านั้น<br>
+                                    Prefix / Suffix = <code>&lt;planning&gt;</code> / <code>&lt;/planning&gt;</code> ทั้งสองแบบ<br>
+                                    gemini 3.5 flash / 3.1 pro ลงมา → Start Reply With = <code>&lt;planning&gt;</code> + ติ๊ก Show reply prefix<br>
+                                    gemini 3.5 flash-lite / 3.6 ขึ้นไป → Start Reply With ว่าง + เอาติ๊กออก
+                                </small>
+                                <div class="flex-container flexGap10 marginTop10">
+                                    <div id="oh-check-now" class="menu_button menu_button_icon"><i class="fa-solid fa-stethoscope"></i><span>เช็คเลย</span></div>
+                                </div>
+                            </div>
+                        </div>
+
                         <div class="flex-container flexGap10 marginTop10">
                             <div id="oh-open-now" class="menu_button menu_button_icon"><i class="fa-solid fa-sliders"></i><span>เปิดแผง</span></div>
                         </div>
@@ -1321,6 +1857,14 @@
             bind('oh-quick', 'showQuickButton', (s) => this.syncQuickButton(s));
             bind('oh-wand', 'showWandButton', (s) => this.syncWandButton(s));
             bind('oh-reload', 'reloadChatAfterToggle');
+            bind('oh-alerts-enabled', 'alerts', (s) => { if (!s.alerts) Alerts.clear(); });
+            bind('oh-watch', 'watchReasoning', (s) => { if (!s.watchReasoning) Alerts.clear('watch'); });
+            bind('oh-check-fmt', 'checkFormatting', (s) => {
+                if (!s.checkFormatting) Alerts.clear('doctor');
+                else Doctor.audit({ quiet: true, cooldown: 0 });
+            });
+            bind('oh-autofix', 'autoFixFormatting');
+            wrap.querySelector('#oh-check-now')?.addEventListener('click', () => Doctor.audit({ quiet: false, cooldown: 0 }));
             wrap.querySelector('#oh-open-now')?.addEventListener('click', () => Panel.show());
         },
 
@@ -1455,6 +1999,23 @@
                 helpString: 'Toggle feature pack (prompt+regex). /oh-feat Lust off',
             });
             add({
+                name: 'oh-check',
+                callback: async () => {
+                    const res = await Doctor.check();
+                    await Doctor.audit({ quiet: false, cooldown: 0 });
+                    return res.issues.length ? `issues:${res.issues.length}` : 'ok';
+                },
+                helpString: 'เช็ค Reasoning Formatting กับโมเดลปัจจุบัน',
+            });
+            add({
+                name: 'oh-fix',
+                callback: async () => {
+                    const rule = await Doctor.fix();
+                    return `fixed:${rule.id}`;
+                },
+                helpString: 'ปรับ Start Reply With / prefix in chat ให้ตรงโมเดล',
+            });
+            add({
                 name: 'oh-on',
                 callback: async (_, name) => {
                     const n = await Features.setByName(String(name || ''), true);
@@ -1475,11 +2036,51 @@
         }
     }
 
+    /** Debounced, visibility-aware hooks. No polling — event driven only. */
+    function registerWatchers() {
+        const ctx = Core.getContext();
+        const es = ctx?.eventSource;
+        const et = ctx?.event_types || ctx?.eventTypes;
+        if (!es?.on || !et) return;
+
+        // one timer per concern so a message event can't cancel a model-change audit
+        const timers = new Map();
+        const later = (key, ms, fn) => {
+            clearTimeout(timers.get(key));
+            timers.set(key, setTimeout(() => {
+                timers.delete(key);
+                if (document.hidden) return; // no work while tab is hidden
+                fn();
+            }, ms));
+        };
+
+        // no debounce: user wants the popup the moment a think comes back wrong
+        const onMessage = () => later('watch', 0, () => Watch.run());
+        if (et.MESSAGE_RECEIVED) es.on(et.MESSAGE_RECEIVED, onMessage);
+        if (et.MESSAGE_SWIPED) es.on(et.MESSAGE_SWIPED, onMessage);
+        if (et.CHATCOMPLETION_MODEL_CHANGED) {
+            es.on(et.CHATCOMPLETION_MODEL_CHANGED, () => later('doctor', 500, () => {
+                Alerts.clear('doctor');
+                Doctor.audit({ quiet: true, cooldown: 0 });
+                Panel.refreshDoctorLine();
+            }));
+        }
+        if (et.GENERATION_STARTED) {
+            es.on(et.GENERATION_STARTED, (_type, _opts, dryRun) => {
+                if (dryRun) return;
+                later('doctor', 0, () => Doctor.audit({ quiet: true }));
+            });
+        }
+        // first audit after settings are live
+        later('doctor', 4000, () => Doctor.audit({ quiet: true }));
+    }
+
     function boot() {
         UI.injectSettings();
         UI.injectQuickButton();
         UI.injectWandButton();
         registerSlash();
+        registerWatchers();
 
         let tries = 0;
         const timer = setInterval(() => {

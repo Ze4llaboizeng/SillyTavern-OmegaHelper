@@ -2,7 +2,7 @@
 
 SillyTavern third-party extension that syncs **Chat Completion** feature prompts (JB/Omega OAI preset) with their **preset-embedded regex**.
 
-**Version:** 1.1.1 (see `manifest.json`)  
+**Version:** 1.2.0 (see `manifest.json`)  
 **Author:** Zealllll
 
 ## Design rules
@@ -58,10 +58,44 @@ git pull
 - Advanced: raw regex list (optional)
 - Profiles: save/load combined prompt+regex on/off sets (stored in this extension’s settings only)
 
+## Reasoning watchdog (v1.2)
+Two checks, both surfaced as in-page popup cards (top-right, dismissable, with action buttons):
+
+**1. Truncated reasoning / missing regex** — after each reply (and swipe) the last
+assistant message is scanned for:
+- reasoning prefix without its suffix → the block never closed
+- a complete `prefix…suffix` pair still visible in chat → Auto-Parse off or template mismatch
+- Omega UI tags left unpaired (e.g. `<LustScore>` with no closer) → regex render/cut incomplete
+
+**2. Reasoning Formatting vs model** — `Advanced Formatting → Reasoning Formatting`
+plus `Start Reply With` are matched against the selected Gemini model:
+
+| Model | Start Reply With | Show reply prefix in chat |
+|-------|------------------|---------------------------|
+| gemini 3.5 flash / 3.1 pro and older | reasoning prefix (e.g. `<planning>`) | checked |
+| gemini 3.5 flash-lite, 3.6+ (any variant) | empty | unchecked |
+
+Non-Gemini models are skipped. `แก้ให้เลย` on the popup (or `/oh-fix`) applies the
+rule and mirrors the native controls. Optional auto-fix in settings.
+
+Only active on **Omega / 5EX** presets. Other presets (NemoEngine, Claude JB, …) are
+skipped entirely — no checks, no popups, and `fix()` refuses to touch their settings.
+
+`<planning>` / `</planning>` is a hard contract: both Reasoning Formatting fields get it
+under **both** model rules. Only Start Reply With differs.
+
+## Verify
+
+```bash
+node selfcheck.mjs   # static CSS/source contracts + headless runtime assertions
+```
+
 ## Slash
 - `/omega` open panel
 - `/oh-feat Lust off` toggle feature by name
 - `/oh-on` / `/oh-off` regex by name (advanced)
+- `/oh-check` audit Reasoning Formatting against the current model
+- `/oh-fix` apply the rule for the current model
 
 ## Notes
 - Keyword matching — works across Omega versions without hardcoding every UUID

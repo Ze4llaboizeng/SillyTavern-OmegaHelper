@@ -1,12 +1,38 @@
-/* Omega Helper — feature pack UI (v1.1.1 mobile layout fix) */
+/* Omega Helper v1.2.0 — UI
+   Perf rules held throughout this file:
+   - no backdrop-filter / blur / filter animations (GPU killers on low-end phones)
+   - transitions restricted to transform + opacity + background-color
+   - flat borders instead of layered box-shadows; one shadow on floating layers only
+   - long lists get `contain` + `content-visibility` so offscreen rows cost nothing
+   - every colour derives from ST theme vars, so themes keep working */
 
 :root {
-  --oh-overlay-z: 3200;
-  --oh-btn-size: 32px;
-  --oh-btn-size-mobile: 30px;
+  --oh-z: 3200;
+  --oh-btn: 32px;
+  --oh-btn-mobile: 30px;
+
+  /* semantic state colours — single source of truth */
+  --oh-on: #3ec37a;
+  --oh-on-dim: #2f9e5e;
+  --oh-half: #d4a53a;
+  --oh-half-dim: #8a6a1e;
+  --oh-bad: #e06c5c;
+  --oh-off: #4a4a4f;
+  --oh-off-edge: #5a5a60;
+  --oh-off-knob: #9a9aa0;
+
+  --oh-line: var(--SmartThemeBorderColor, #3a3a42);
+  --oh-surface: var(--SmartThemeBlurTintColor, #1c1c22);
+  --oh-text: var(--SmartThemeBodyColor, #e8e8ee);
+  --oh-accent: var(--SmartThemeQuoteColor, #8ab4f8);
+
+  --oh-r-sm: 8px;
+  --oh-r-md: 10px;
+  --oh-r-lg: 14px;
+  --oh-tap: 40px;
 }
 
-/* ---- Quick button on send form ---- */
+/* ============================ Quick button ============================ */
 #oh-quick-btn-wrapper {
   position: relative;
   display: inline-flex !important;
@@ -16,9 +42,9 @@
   justify-content: center;
   align-self: center;
   flex: 0 0 auto;
-  height: var(--oh-btn-size);
-  min-height: var(--oh-btn-size);
-  min-width: var(--oh-btn-size);
+  height: var(--oh-btn);
+  min-height: var(--oh-btn);
+  min-width: var(--oh-btn);
   vertical-align: middle;
   overflow: visible;
   pointer-events: auto;
@@ -31,24 +57,23 @@
   align-items: center;
   justify-content: center;
   box-sizing: border-box;
-  width: var(--oh-btn-size);
-  height: var(--oh-btn-size);
-  min-width: var(--oh-btn-size);
-  min-height: var(--oh-btn-size);
-  flex: 0 0 var(--oh-btn-size);
+  width: var(--oh-btn);
+  height: var(--oh-btn);
+  min-width: var(--oh-btn);
+  min-height: var(--oh-btn);
+  flex: 0 0 var(--oh-btn);
   padding: 0;
-  border-radius: 8px;
+  border-radius: var(--oh-r-sm);
   cursor: pointer;
-  opacity: 0.9;
-  color: var(--text-muted, rgba(128, 128, 128, 0.9));
-  border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, 0.25));
+  color: var(--text-muted, rgba(150, 150, 158, 0.95));
+  border: 1px solid var(--oh-line);
   background: transparent;
   touch-action: manipulation;
   -webkit-touch-callout: none;
   -webkit-tap-highlight-color: transparent;
   user-select: none;
   -webkit-user-select: none;
-  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease, opacity 0.12s ease;
+  transition: transform 0.12s ease, background-color 0.12s ease, color 0.12s ease;
 }
 
 #oh-quick-btn i {
@@ -58,33 +83,29 @@
 }
 
 #oh-quick-btn:hover,
-#oh-quick-btn:focus {
-  opacity: 1;
+#oh-quick-btn:focus-visible {
   outline: none;
-  color: var(--SmartThemeBodyColor, inherit);
-  background: color-mix(in srgb, var(--SmartThemeQuoteColor, #8ab4f8) 18%, transparent);
-  border-color: color-mix(in srgb, var(--SmartThemeQuoteColor, #8ab4f8) 45%, transparent);
+  color: var(--oh-text);
+  background: rgb(255 255 255 / 9%);
 }
 
-#oh-quick-btn:active {
-  transform: scale(0.93);
-}
+#oh-quick-btn:active { transform: scale(0.92); }
 
+/* open state: solid dot cue, no glow */
 body.oh-open #oh-quick-btn {
-  color: var(--SmartThemeQuoteColor, #8ec7ff);
-  border-color: color-mix(in srgb, var(--SmartThemeQuoteColor, #8ec7ff) 55%, transparent);
+  color: var(--oh-accent);
+  border-color: var(--oh-accent);
 }
 
-/* ---- Fullscreen overlay sheet ---- */
+/* ============================ Overlay sheet ============================ */
 #oh-overlay {
   position: fixed;
   inset: 0;
-  z-index: var(--oh-overlay-z);
+  z-index: var(--oh-z);
   display: flex;
   align-items: stretch;
   justify-content: center;
-  /* solid enough that chat chrome does not bleed through on phones */
-  background: rgba(0, 0, 0, 0.72);
+  background: rgb(0 0 0 / 74%);
   padding: 0;
   box-sizing: border-box;
   width: 100%;
@@ -104,25 +125,38 @@ body.oh-open #oh-quick-btn {
   max-height: 100%;
   max-height: 100dvh;
   margin: 0 auto;
-  background: var(--SmartThemeBlurTintColor, #1e1e24);
-  color: var(--SmartThemeBodyColor, #eee);
+  background: var(--oh-surface);
+  color: var(--oh-text);
   border: none;
-  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 4px 32px rgb(0 0 0 / 45%);
   min-width: 0;
   min-height: 0;
   box-sizing: border-box;
   overflow: hidden;
+  contain: layout paint;
 }
 
+@media (min-width: 769px) {
+  #oh-overlay { padding: 16px; }
+
+  #oh-panel {
+    height: min(860px, calc(100dvh - 32px));
+    margin: auto;
+    border: 1px solid var(--oh-line);
+    border-radius: var(--oh-r-lg);
+  }
+}
+
+/* ---- header ---- */
 #oh-panel-header {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: max(10px, env(safe-area-inset-top, 0px)) 12px 10px;
-  border-bottom: 1px solid var(--SmartThemeBorderColor, #333);
+  border-bottom: 1px solid var(--oh-line);
   flex: 0 0 auto;
   min-width: 0;
-  background: color-mix(in srgb, var(--SmartThemeBlurTintColor, #1e1e24) 94%, #000);
+  background: var(--oh-surface);
 }
 
 #oh-panel-header h3 {
@@ -132,33 +166,43 @@ body.oh-open #oh-quick-btn {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 1.05em;
+  font-size: 1.02em;
+  font-weight: 600;
+  letter-spacing: 0.01em;
   line-height: 1.25;
 }
 
 #oh-panel-header h3 i {
-  margin-right: 6px;
+  margin-right: 7px;
+  color: var(--oh-accent);
 }
 
+/* on/total counter — reads as a pill, not stray text */
 #oh-panel-header .oh-meta {
-  opacity: 0.7;
-  font-size: 0.8em;
-  white-space: nowrap;
   flex: 0 0 auto;
   max-width: 30%;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.74em;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--oh-line);
+  opacity: 0.85;
+  font-variant-numeric: tabular-nums;
 }
 
 #oh-panel-header #oh-close {
   flex: 0 0 auto;
-  min-width: 40px;
-  min-height: 40px;
+  min-width: var(--oh-tap);
+  min-height: var(--oh-tap);
   display: inline-flex;
   align-items: center;
   justify-content: center;
 }
 
+/* ---- body / footer ---- */
 #oh-panel-body {
   flex: 1 1 auto;
   overflow-x: hidden;
@@ -173,26 +217,75 @@ body.oh-open #oh-quick-btn {
 }
 
 #oh-panel-footer {
-  position: relative;
-  bottom: auto;
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   padding: 10px 12px max(12px, env(safe-area-inset-bottom, 0px));
-  border-top: 1px solid var(--SmartThemeBorderColor, #333);
-  background: color-mix(in srgb, var(--SmartThemeBlurTintColor, #1e1e24) 94%, #000);
+  border-top: 1px solid var(--oh-line);
+  background: var(--oh-surface);
   flex: 0 0 auto;
   min-width: 0;
   max-width: 100%;
   box-sizing: border-box;
 }
 
+/* ============================ Tabs ============================ */
+.oh-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 10px;
+  padding: 3px;
+  border-radius: 999px;
+  border: 1px solid var(--oh-line);
+  background: rgb(0 0 0 / 22%);
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.oh-tabs::-webkit-scrollbar { display: none; }
+
+/* segmented control: active = filled, inactive = plain text (no border noise) */
+.oh-tab {
+  flex: 1 1 0;
+  min-width: 0;
+  text-align: center;
+  padding: 9px 12px;
+  border-radius: 999px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 0.88em;
+  line-height: 1.2;
+  opacity: 0.72;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background-color 0.14s ease, opacity 0.14s ease;
+}
+
+.oh-tab:hover { opacity: 0.9; }
+
+.oh-tab.active {
+  opacity: 1;
+  font-weight: 600;
+  background: rgb(255 255 255 / 11%);
+}
+
+/* ============================ Toolbar ============================ */
 .oh-toolbar {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
   min-width: 0;
   max-width: 100%;
 }
@@ -204,78 +297,82 @@ body.oh-open #oh-quick-btn {
   flex: 1 1 140px;
   max-width: 100%;
   box-sizing: border-box;
-  min-height: 40px;
+  min-height: var(--oh-tap);
+  border-radius: var(--oh-r-sm);
 }
 
-.oh-tabs {
+.oh-search-box {
+  position: relative;
   display: flex;
-  gap: 6px;
-  margin-bottom: 10px;
-  flex-wrap: nowrap;
+  flex: 1 1 220px;
   min-width: 0;
-  max-width: 100%;
-  overflow-x: auto;
-  overscroll-behavior-x: contain;
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: none;
+  align-items: center;
 }
 
-.oh-tabs::-webkit-scrollbar {
-  display: none;
+.oh-search-box > i {
+  position: absolute;
+  left: 12px;
+  z-index: 1;
+  opacity: 0.55;
+  pointer-events: none;
 }
 
-.oh-tab {
-  flex: 1 1 0;
-  min-width: 0;
-  text-align: center;
-  padding: 10px 12px;
-  border-radius: 999px;
-  border: 1px solid var(--SmartThemeBorderColor, #444);
-  cursor: pointer;
-  opacity: 1;
-  font-size: 0.9em;
-  line-height: 1.2;
-  user-select: none;
-  -webkit-user-select: none;
-  touch-action: manipulation;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  background: color-mix(in srgb, var(--SmartThemeBlurTintColor, #1e1e24) 80%, #000);
+.oh-search-box #oh-search {
+  width: 100%;
+  padding-left: 34px;
 }
 
-.oh-tab:not(.active) {
-  opacity: 0.78;
+/* profile row: icon-tight buttons so 5 fit without wrapping on desktop */
+.oh-profile-actions { margin-bottom: 10px; }
+
+.oh-profile-actions .menu_button {
+  flex: 0 1 auto;
+  padding: 6px 10px;
+  gap: 5px;
 }
 
-.oh-tab.active {
-  opacity: 1;
-  background: color-mix(in srgb, var(--SmartThemeQuoteColor, #8ab4f8) 22%, transparent);
-  border-color: color-mix(in srgb, var(--SmartThemeQuoteColor, #8ab4f8) 50%, #444);
-  font-weight: 600;
-}
-
+/* ============================ Status lines ============================ */
 .oh-status {
-  font-size: 0.85em;
-  opacity: 0.8;
-  line-height: 1.35;
-  margin: 0 0 10px;
+  font-size: 0.82em;
+  opacity: 0.75;
+  line-height: 1.4;
+  margin: 0 0 8px;
   word-break: break-word;
   overflow-wrap: anywhere;
 }
 
-.oh-status.warn { color: #f0c14b; opacity: 1; }
-.oh-status.ok { color: #7dcea0; opacity: 1; }
+/* state text uses a left rule instead of coloured body text — easier to read */
+.oh-status.warn,
+.oh-status.ok {
+  opacity: 1;
+  padding: 6px 9px;
+  border-radius: var(--oh-r-sm);
+  border-left: 3px solid var(--oh-line);
+  background: rgb(255 255 255 / 4%);
+}
 
+.oh-status.warn { border-left-color: var(--oh-half); color: #f2d489; }
+.oh-status.ok { border-left-color: var(--oh-on); color: #a6e6c1; }
+
+.oh-doctor-line {
+  margin-top: -2px;
+  margin-bottom: 10px;
+  font-size: 0.78em;
+}
+
+/* ============================ Group cards ============================ */
 .oh-group {
-  border: 1px solid var(--SmartThemeBorderColor, #333);
-  border-radius: 10px;
+  border: 1px solid var(--oh-line);
+  border-radius: var(--oh-r-md);
   margin-bottom: 10px;
   overflow: hidden;
   min-width: 0;
   max-width: 100%;
   box-sizing: border-box;
-  background: color-mix(in srgb, var(--SmartThemeBlurTintColor, #1e1e24) 88%, transparent);
+  background: rgb(255 255 255 / 3%);
+  /* offscreen groups skip layout+paint entirely on long catalogs */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 220px;
 }
 
 .oh-group-head {
@@ -283,12 +380,15 @@ body.oh-open #oh-quick-btn {
   align-items: center;
   gap: 8px;
   padding: 10px 12px;
-  background: color-mix(in srgb, var(--SmartThemeQuoteColor, #8ab4f8) 8%, transparent);
+  background: rgb(255 255 255 / 4%);
   cursor: pointer;
   min-width: 0;
   user-select: none;
   -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
 }
+
+.oh-group-head:hover { background: rgb(255 255 255 / 7%); }
 
 .oh-group-head > .oh-group-title {
   flex: 1 1 auto;
@@ -301,16 +401,26 @@ body.oh-open #oh-quick-btn {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 0.95em;
+  font-weight: 600;
+}
+
+.oh-group-title b i {
+  margin-right: 6px;
+  opacity: 0.75;
+  width: 1em;
+  text-align: center;
 }
 
 .oh-group-title small {
   display: block;
-  opacity: 0.65;
-  font-size: 0.8em;
-  margin-top: 2px;
+  opacity: 0.6;
+  font-size: 0.78em;
+  margin-top: 3px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .oh-group-actions {
@@ -320,31 +430,50 @@ body.oh-open #oh-quick-btn {
 }
 
 .oh-group-actions .menu_button {
-  min-width: 40px;
-  min-height: 40px;
+  min-width: var(--oh-tap);
+  min-height: var(--oh-tap);
   padding: 6px 8px;
 }
 
-.oh-group-body { padding: 4px 8px 8px; }
+.oh-group-body { padding: 2px 8px 6px; }
 .oh-group.collapsed .oh-group-body { display: none; }
 
+/* ============================ Rows ============================ */
 .oh-row {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 6px;
-  border-radius: 8px;
+  padding: 9px 8px;
+  border-radius: var(--oh-r-sm);
   min-width: 0;
   max-width: 100%;
   box-sizing: border-box;
+  /* 2px status rail on the left — the row's state is readable at a glance */
+  border-left: 2px solid transparent;
+  transition: background-color 0.12s ease;
 }
 
-.oh-row:hover {
-  background: color-mix(in srgb, var(--SmartThemeQuoteColor, #8ab4f8) 10%, transparent);
+.oh-row + .oh-row {
+  border-top: 1px solid rgb(255 255 255 / 6%);
+  border-radius: 0;
 }
 
-.oh-row.partial {
-  outline: 1px dashed color-mix(in srgb, #f0c14b 55%, transparent);
+.oh-row:hover { background: rgb(255 255 255 / 5%); }
+
+.oh-row.is-on { border-left-color: var(--oh-on); }
+.oh-row.is-partial { border-left-color: var(--oh-half); }
+
+/* OFF = fully muted. No accent rail, no coloured badges, dimmed text. */
+.oh-row.is-off {
+  border-left-color: transparent;
+  opacity: 0.58;
+}
+
+.oh-row.is-off .oh-badge {
+  border-color: var(--oh-line) !important;
+  color: var(--oh-text) !important;
+  background: transparent !important;
+  opacity: 0.65;
 }
 
 .oh-row .oh-name {
@@ -358,47 +487,72 @@ body.oh-open #oh-quick-btn {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.95em;
+  font-size: 0.93em;
+  line-height: 1.3;
 }
+
+.oh-row.is-on .oh-name .oh-main { font-weight: 600; }
 
 .oh-row .oh-name .oh-sub {
   display: block;
   opacity: 0.55;
-  font-size: 0.75em;
-  margin-top: 2px;
+  font-size: 0.73em;
+  margin-top: 4px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  line-height: 1.35;
 }
 
+/* ============================ Badges ============================ */
 .oh-badge {
   display: inline-block;
-  font-size: 0.7em;
+  font-size: 0.92em;
   padding: 1px 6px;
-  border-radius: 999px;
-  border: 1px solid var(--SmartThemeBorderColor, #444);
-  opacity: 0.85;
-  margin-left: 4px;
+  border-radius: 5px;
+  border: 1px solid var(--oh-line);
+  margin-right: 4px;
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  vertical-align: baseline;
 }
 
 .oh-badge.prompt { border-color: #6c8cff55; color: #9db4ff; }
-.oh-badge.regex { border-color: #e8b86d55; color: #f0c98a; }
+.oh-badge.regex { border-color: #c39bd355; color: #d7bde2; }
 .oh-badge.preset { border-color: #6c8cff55; color: #9db4ff; }
 .oh-badge.global { border-color: #7dcea055; color: #9fe0b8; }
-.oh-badge.scoped { border-color: #e8b86d55; color: #f0c98a; }
+.oh-badge.scoped { border-color: #c39bd355; color: #d7bde2; }
 .oh-badge.pair { border-color: #c39bd355; color: #d7bde2; }
 .oh-badge.core { border-color: #f1948a55; color: #f5b7b1; }
-.oh-badge.miss { border-color: #8885; color: #bbb; }
-.oh-badge.partial { border-color: #f0c14b88; color: #f0c14b; }
+.oh-badge.miss { border-color: var(--oh-line); color: var(--oh-text); opacity: 0.6; }
 
+/* amber is reserved for the half-on state only */
+.oh-badge.partial {
+  border-color: var(--oh-half);
+  color: #f2d489;
+  font-weight: 600;
+}
+
+/* ============================ Switch ============================ */
+/* OFF  = grey track + grey knob (no accent anywhere)
+   ON   = green track + white knob
+   HALF = amber track, knob centred (mixed prompt/regex)
+   Only transform + background-color animate. No shadows on the moving knob. */
 .oh-toggle {
+  --w: 44px;
+  --h: 26px;
+  --k: 20px;
+  --shift: calc(var(--w) - var(--k) - 6px);
   position: relative;
-  width: 48px;
-  height: 30px;
-  flex-shrink: 0;
+  width: var(--w);
+  height: var(--h);
+  flex: 0 0 var(--w);
   cursor: pointer;
   touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: transform 0.1s ease;
 }
 
 .oh-toggle input {
@@ -411,45 +565,75 @@ body.oh-open #oh-quick-btn {
 .oh-toggle .oh-slider {
   position: absolute;
   inset: 0;
-  background: #555;
   border-radius: 999px;
-  transition: background 0.15s ease;
+  box-sizing: border-box;
+  background: var(--oh-off);
+  border: 1px solid var(--oh-off-edge);
+  transition: background-color 0.16s ease, border-color 0.16s ease;
 }
 
 .oh-toggle .oh-slider::before {
   content: '';
   position: absolute;
-  width: 24px;
-  height: 24px;
-  left: 3px;
-  top: 3px;
-  background: #fff;
+  width: var(--k);
+  height: var(--k);
+  left: 2px;
+  top: 2px;
   border-radius: 50%;
-  transition: transform 0.15s ease;
+  background: var(--oh-off-knob);
+  transition: transform 0.18s cubic-bezier(0.32, 0.72, 0, 1), background-color 0.16s ease;
 }
 
 .oh-toggle input:checked + .oh-slider {
-  background: color-mix(in srgb, var(--SmartThemeQuoteColor, #5b8def) 80%, #2ecc71);
+  background: var(--oh-on-dim);
+  border-color: var(--oh-on);
 }
 
 .oh-toggle input:checked + .oh-slider::before {
-  transform: translateX(18px);
+  transform: translateX(var(--shift));
+  background: #fff;
 }
 
 .oh-toggle input:indeterminate + .oh-slider {
-  background: color-mix(in srgb, #f0c14b 70%, #555);
+  background: var(--oh-half-dim);
+  border-color: var(--oh-half);
 }
 
-.oh-toggle input:disabled + .oh-slider { opacity: 0.4; }
+.oh-toggle input:indeterminate + .oh-slider::before {
+  transform: translateX(calc(var(--shift) / 2));
+  background: #f0c14b;
+}
 
+.oh-toggle input:focus-visible + .oh-slider {
+  outline: 2px solid var(--oh-accent);
+  outline-offset: 2px;
+}
+
+.oh-toggle:active { transform: scale(0.94); }
+
+.oh-toggle input:disabled + .oh-slider,
+.oh-toggle.busy .oh-slider { opacity: 0.5; }
+
+.oh-toggle.busy { cursor: progress; }
+
+/* tap target padding without changing the visual size */
+.oh-row .oh-toggle::after {
+  content: '';
+  position: absolute;
+  inset: -8px -6px;
+}
+
+/* ============================ Empty state ============================ */
 .oh-empty {
-  opacity: 0.7;
+  opacity: 0.65;
   text-align: center;
-  padding: 28px 12px;
-  line-height: 1.45;
+  padding: 34px 14px;
+  line-height: 1.55;
+  font-size: 0.9em;
   overflow-wrap: anywhere;
 }
 
+/* ============================ Settings drawer ============================ */
 .oh-settings {
   min-width: 0;
   max-width: 100%;
@@ -473,21 +657,31 @@ body.oh-open #oh-quick-btn {
 .oh-settings .oh-hint {
   display: block;
   margin-top: 8px;
-  line-height: 1.35;
-  opacity: 0.65;
+  line-height: 1.45;
+  opacity: 0.6;
+  font-size: 0.8em;
 }
 
+/* nested drawer gets an indent rule so it reads as a subsection */
+.oh-settings .inline-drawer .inline-drawer {
+  margin-top: 8px;
+  padding-left: 8px;
+  border-left: 2px solid var(--oh-line);
+}
+
+/* ============================ Buttons ============================ */
 #oh-panel .menu_button,
 .oh-settings .menu_button {
-  min-height: 40px;
-  min-width: 40px;
+  min-height: var(--oh-tap);
+  min-width: var(--oh-tap);
   box-sizing: border-box;
+  border-radius: var(--oh-r-sm);
 }
 
 #oh-panel-footer .menu_button {
   flex: 1 1 auto;
   justify-content: center;
-  min-width: min(100%, 140px);
+  min-width: min(100%, 132px);
 }
 
 body.oh-no-scroll,
@@ -495,20 +689,140 @@ body.oh-open {
   overflow: hidden !important;
 }
 
-/* Keep ST prompt-manager edit popup above this overlay if opened from footer */
+/* keep ST's prompt-manager edit popup above this overlay */
 #completion_prompt_manager_popup {
-  z-index: calc(var(--oh-overlay-z) + 20) !important;
+  z-index: calc(var(--oh-z) + 20) !important;
 }
 
-/* ---- Tablet / phone ---- */
+/* ============================ Alert popups ============================ */
+#oh-alerts {
+  position: fixed;
+  top: max(12px, env(safe-area-inset-top, 0px));
+  right: 12px;
+  z-index: calc(var(--oh-z) + 40);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(360px, calc(100vw - 24px));
+  pointer-events: none;
+  contain: layout;
+}
+
+.oh-alert {
+  pointer-events: auto;
+  display: flex;
+  gap: 10px;
+  padding: 10px 10px 10px 11px;
+  border-radius: var(--oh-r-lg);
+  background: var(--oh-surface);
+  border: 1px solid var(--oh-line);
+  border-left: 3px solid var(--oh-off-edge);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 45%);
+  color: var(--oh-text);
+  opacity: 0;
+  transform: translateY(-6px);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.oh-alert.in {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.oh-alert.warn { border-left-color: var(--oh-half); }
+.oh-alert.error { border-left-color: var(--oh-bad); }
+.oh-alert.ok { border-left-color: var(--oh-on); }
+.oh-alert.info { border-left-color: var(--oh-accent); }
+
+.oh-alert-icon {
+  flex: 0 0 auto;
+  padding-top: 2px;
+  font-size: 0.95em;
+}
+
+.oh-alert.warn .oh-alert-icon { color: #f0c14b; }
+.oh-alert.error .oh-alert-icon { color: #f5b7b1; }
+.oh-alert.ok .oh-alert-icon { color: #9fe0b8; }
+.oh-alert.info .oh-alert-icon { color: #9db4ff; }
+
+.oh-alert-main { flex: 1 1 auto; min-width: 0; }
+
+.oh-alert-title {
+  font-weight: 600;
+  font-size: 0.9em;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.oh-alert-body {
+  margin-top: 5px;
+  font-size: 0.79em;
+  line-height: 1.5;
+  opacity: 0.78;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  max-height: 38vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.oh-alert-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 9px;
+}
+
+.oh-alert-btn {
+  min-height: 32px !important;
+  min-width: 0 !important;
+  padding: 4px 10px;
+  font-size: 0.82em;
+  border-radius: var(--oh-r-sm);
+}
+
+.oh-alert-btn.primary {
+  border-color: var(--oh-on);
+  color: #bdf0d2;
+}
+
+.oh-alert-close {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  cursor: pointer;
+  opacity: 0.55;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.oh-alert-close:hover {
+  opacity: 1;
+  background: rgb(255 255 255 / 9%);
+}
+
+/* ============================ Tablet / phone ============================ */
 @media (max-width: 768px) {
-  :root {
-    --oh-btn-size: var(--oh-btn-size-mobile);
+  :root { --oh-btn: var(--oh-btn-mobile); }
+
+  #oh-alerts {
+    left: 8px;
+    right: 8px;
+    width: auto;
   }
 
-  #oh-overlay {
-    background: var(--SmartThemeBlurTintColor, #121218);
+  .oh-alert-actions .oh-alert-btn {
+    flex: 1 1 calc(50% - 6px);
+    justify-content: center;
   }
+
+  /* opaque backdrop: cheaper than translucency over a busy chat, and no bleed */
+  #oh-overlay { background: var(--oh-surface); }
 
   #oh-panel {
     width: 100%;
@@ -521,22 +835,10 @@ body.oh-open {
     box-shadow: none;
   }
 
-  #oh-panel-header {
-    padding: max(12px, env(safe-area-inset-top, 0px)) 10px 10px;
-  }
-
-  #oh-panel-header h3 {
-    font-size: 1em;
-  }
-
-  #oh-panel-header .oh-meta {
-    max-width: 28%;
-    font-size: 0.75em;
-  }
-
-  #oh-panel-body {
-    padding: 8px 10px 12px;
-  }
+  #oh-panel-header { padding: max(12px, env(safe-area-inset-top, 0px)) 10px 10px; }
+  #oh-panel-header h3 { font-size: 0.98em; }
+  #oh-panel-header .oh-meta { max-width: 26%; font-size: 0.7em; }
+  #oh-panel-body { padding: 8px 10px 12px; }
 
   .oh-toolbar {
     flex-direction: column;
@@ -550,23 +852,43 @@ body.oh-open {
     width: 100%;
   }
 
-  .oh-toolbar .menu_button {
-    flex: 1 1 calc(50% - 8px);
+  .oh-search-box {
+    flex: 1 1 auto;
+    width: 100%;
+  }
+
+  /* profile actions stay a grid row instead of stacking into 5 tall buttons */
+  .oh-profile-actions {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .oh-profile-actions .menu_button {
+    flex: 1 1 calc(33% - 8px);
     justify-content: center;
   }
 
   .oh-group-head {
-    flex-wrap: wrap;
+    gap: 6px;
+    padding: 9px 8px 9px 10px;
   }
 
   .oh-group-actions {
-    width: 100%;
-    justify-content: flex-end;
+    width: auto;
+    justify-content: initial;
+    gap: 2px;
+  }
+
+  .oh-group-actions .menu_button {
+    min-width: 38px;
+    min-height: 38px;
+    padding: 5px;
   }
 
   .oh-group-title b,
   .oh-group-title small,
-  .oh-row .oh-name .oh-main {
+  .oh-row .oh-name .oh-main,
+  .oh-row .oh-name .oh-sub {
     white-space: normal;
     display: -webkit-box;
     -webkit-line-clamp: 2;
@@ -576,16 +898,9 @@ body.oh-open {
     text-overflow: ellipsis;
   }
 
-  .oh-row .oh-name .oh-sub {
-    white-space: normal;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
-    -webkit-box-orient: vertical;
-  }
-
   #oh-panel-footer {
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     padding: 10px 10px max(14px, env(safe-area-inset-bottom, 0px));
   }
 
@@ -593,38 +908,58 @@ body.oh-open {
     width: 100%;
     min-width: 0;
     justify-content: center;
+    padding-inline: 8px;
   }
 
-  .oh-tab {
-    padding: 11px 10px;
-    font-size: 0.88em;
-  }
+  .oh-tab { padding: 10px 10px; font-size: 0.86em; }
 }
 
 /* very narrow phones */
 @media (max-width: 400px) {
-  #oh-panel-header h3 {
-    font-size: 0.95em;
-  }
-
-  .oh-tab {
-    font-size: 0.82em;
-    padding: 10px 8px;
-  }
-
-  .oh-toolbar .menu_button span {
-    font-size: 0.9em;
-  }
+  #oh-panel-header h3 { font-size: 0.92em; }
+  .oh-tab { font-size: 0.8em; padding: 9px 8px; }
+  .oh-toolbar .menu_button span { font-size: 0.9em; }
+  .oh-profile-actions .menu_button { flex-basis: calc(50% - 8px); }
+  #oh-profile-del,
+  #oh-refresh { flex-basis: calc(25% - 8px); }
+  .oh-row { gap: 8px; padding: 8px 6px; }
+  .oh-toggle { --w: 40px; --h: 24px; --k: 18px; }
+  #oh-panel-footer .menu_button { font-size: 0.86em; }
 }
 
+/* ============================ Low-spec guards ============================ */
+/* Any device the user has set to reduced motion, plus coarse-pointer devices
+   with no hover: drop every transition. Static paint only. */
 @media (prefers-reduced-motion: reduce) {
   #oh-quick-btn,
+  .oh-alert,
+  .oh-tab,
+  .oh-row,
+  .oh-group-head,
+  .oh-toggle,
   .oh-toggle .oh-slider,
   .oh-toggle .oh-slider::before {
-    transition: none;
+    transition: none !important;
   }
 
-  #oh-quick-btn:active {
+  #oh-quick-btn:active,
+  .oh-toggle:active {
     transform: none;
   }
+
+  .oh-alert { opacity: 1; transform: none; }
+}
+
+/* touch devices: kill hover styles that flicker as "sticky hover" after a tap */
+@media (hover: none) {
+  #oh-quick-btn:hover,
+  .oh-row:hover,
+  .oh-tab:hover,
+  .oh-group-head:hover,
+  .oh-alert-close:hover {
+    background: inherit;
+  }
+
+  .oh-row:hover { background: transparent; }
+  .oh-group-head:hover { background: rgb(255 255 255 / 4%); }
 }
