@@ -81,7 +81,17 @@ ok('decorative divider lines split preset groups',
     raw.includes('isDivider(prompt.name)') && raw.includes('sectionDivider: true'));
 ok('prompt list preserves prompt_order', raw.includes('orderedPrompts.push({ ...prompt, orderIndex })'));
 ok('single feature toggle does not full-refresh the panel',
-    /await Features\.setPack\([\s\S]*?this\.syncPackRow\(row, pack\)/.test(raw));
+    /const pending = Features\.setPack\([\s\S]*?this\.syncPackRow\(row, pack\);[\s\S]*?await pending/.test(raw));
+ok('prompt state mutates before background persistence',
+    /prompt\.enabled = !!enabled[\s\S]*await Prompts\.setEnabled/.test(raw)
+    && raw.includes('void this.queueSave(pm, render)'));
+ok('native Prompt Manager rows sync without a full render',
+    raw.includes("'[data-pm-identifier]'")
+    && raw.includes("this.syncNativeEnabled(pm, ids, enabled)")
+    && raw.includes("toggle?.classList.toggle('fa-toggle-on', !!enabled)"));
+ok('regex persistence does not block its live toggle',
+    raw.includes('void this.queueSave(type)')
+    && /const pending = Engine\.setEnabled\([\s\S]*?void Engine\.reloadChatIfNeeded\(\)/.test(raw));
 ok('prompt rows are not merged by feature keywords',
     raw.includes('One real prompt = one row') && !/for \(const def of FEATURE_DEFS\)/.test(raw));
 ok('prompt and regex controls are separate', !raw.includes('id="oh-sync-mode"'));

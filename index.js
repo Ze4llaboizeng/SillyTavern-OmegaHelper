@@ -127,14 +127,54 @@
     // -----------------------------------------------------------------------
     const Prompts = {
         mod: null,
+        manager: null,
+        saveQueue: Promise.resolve(),
         async load() {
             if (this.mod) return this.mod;
             this.mod = await import('/scripts/openai.js');
             return this.mod;
         },
         async getManager() {
+            if (this.manager) return this.manager;
             const mod = await this.load();
-            return mod?.promptManager || null;
+            this.manager = mod?.promptManager || null;
+            return this.manager;
+        },
+        queueSave(pm, render = false) {
+            this.saveQueue = this.saveQueue.catch(() => {}).then(async () => {
+                try {
+                    if (typeof pm.saveServiceSettings === 'function') await pm.saveServiceSettings();
+                    else Core.saveSettings();
+                } catch (_) { Core.saveSettings(); }
+                if (render) {
+                    try { await pm.render?.(false); } catch (_) {}
+                }
+            });
+            return this.saveQueue;
+        },
+        syncNativeEnabled(pm, identifiers, enabled) {
+            const ids = new Set((identifiers || []).map(String));
+            if (!ids.size) return;
+            const prefix = pm?.configuration?.prefix || 'completion_';
+            const disabledClass = `${prefix}prompt_manager_prompt_disabled`;
+            const container = pm?.containerElement
+                || document.getElementById(pm?.configuration?.containerIdentifier)
+                || document;
+
+            // Patch only the affected native rows. A full Prompt Manager render
+            // recalculates the whole list and is noticeably slow on phones.
+            container.querySelectorAll?.('[data-pm-identifier]')?.forEach((row) => {
+                if (!ids.has(String(row?.dataset?.pmIdentifier))) return;
+                row.classList.toggle(disabledClass, !enabled);
+                const toggle = row.querySelector?.('.prompt-manager-toggle-action');
+                toggle?.classList.toggle('fa-toggle-on', !!enabled);
+                toggle?.classList.toggle('fa-toggle-off', !enabled);
+            });
+
+            try {
+                const counts = pm?.tokenHandler?.getCounts?.();
+                if (counts) for (const id of ids) counts[id] = null;
+            } catch (_) {}
         },
         async getOaiName() {
             try {
@@ -240,15 +280,10 @@
             // Avoid disk writes and a full Prompt Manager render on the common
             // every-turn path where all required prompts are already enabled.
             if (changed > 0) {
-                try {
-                    if (typeof pm.saveServiceSettings === 'function') await pm.saveServiceSettings();
-                    else Core.saveSettings();
-                } catch (_) {
-                    Core.saveSettings();
-                }
-                if (render) {
-                    try { await pm.render?.(false); } catch (_) {}
-                }
+                this.syncNativeEnabled(pm, ids, enabled);
+                // The live prompt_order above is authoritative immediately.
+                // Persistence runs serially in the background so rapid taps never wait.
+                void this.queueSave(pm, render);
             }
             return changed;
         },
@@ -318,6 +353,7 @@
     const Engine = {
         mod: null,
         loading: null,
+        saveQueue: Promise.resolve(),
         async load() {
             if (this.mod) return this.mod;
             if (this.loading) return this.loading;
@@ -360,6 +396,13 @@
                 }
             } catch (_) {}
         },
+        queueSave(type) {
+            this.saveQueue = this.saveQueue.catch(() => {}).then(async () => {
+                const m = await this.load();
+                await this.saveScripts(m.getScriptsByType(type) || [], type);
+            });
+            return this.saveQueue;
+        },
         async isPresetAllowed() {
             try {
                 const m = await this.load();
@@ -383,7 +426,11 @@
         async setEnabled(ids, enabled) {
             const want = new Set((ids || []).filter(Boolean));
             if (!want.size) return 0;
-            const all = await this.listAll();
+            const all = this.mod
+                ? Object.entries(this.mod.SCRIPT_TYPES).flatMap(([key, type]) =>
+                    (this.mod.getScriptsByType(type) || []).filter(Boolean)
+                        .map((script) => ({ script, type, typeName: key.toLowerCase() })))
+                : await this.listAll();
             const byType = new Map();
             let changed = 0;
             for (const e of all) {
@@ -395,7 +442,8 @@
                 changed += 1;
             }
             for (const type of byType.keys()) {
-                await this.saveScripts(await this.getScriptsByType(type), type);
+                // Regex objects are already live; only persistence is deferred.
+                void this.queueSave(type);
             }
             return changed;
         },
@@ -541,11 +589,8 @@
             const list = packs || [];
             const pIds = [...new Set(list.flatMap((pack) => pack.prompts.map((p) => p.identifier)))];
 
-            let pChanged = 0;
-            if (pIds.length) pChanged = await Prompts.setEnabled(pIds, enabled, { render: false });
-
-            // Keep the current view-model authoritative without fetching and
-            // rebuilding the whole panel after every tap.
+            // Update the view-model synchronously. The live prompt_order mutation
+            // happens in the same tap; disk persistence continues in background.
             for (const pack of list) {
                 for (const prompt of pack.prompts) prompt.enabled = !!enabled;
                 pack.promptOn = pack.prompts.filter((p) => p.enabled).length;
@@ -554,6 +599,9 @@
                 pack.state = pack.controlledOn === 0 ? 'off'
                     : (pack.controlledOn === pack.controlledTotal ? 'on' : 'partial');
             }
+
+            let pChanged = 0;
+            if (pIds.length) pChanged = await Prompts.setEnabled(pIds, enabled, { render: false });
 
             if (!quiet) {
                 Core.toast(
@@ -1674,18 +1722,28 @@
                 `;
                 head.querySelector('.oh-g-on')?.addEventListener('click', async (e) => {
                     e.stopPropagation();
+                    const pending = Features.setPacks(g.items, true, {
+                        reload: false,
+                        quiet: false,
+                        label: `ทั้งหมวด ${g.meta.title}`,
+                    });
+                    this.renderFeatures(host);
+                    this.updateFeatureMeta();
                     try {
-                        await Features.setGroup(g.id, true);
-                        this.renderFeatures(host);
-                        this.updateFeatureMeta();
+                        await pending;
                     } catch (err) { Core.toast('error', err?.message || String(err)); }
                 });
                 head.querySelector('.oh-g-off')?.addEventListener('click', async (e) => {
                     e.stopPropagation();
+                    const pending = Features.setPacks(g.items, false, {
+                        reload: false,
+                        quiet: false,
+                        label: `ทั้งหมวด ${g.meta.title}`,
+                    });
+                    this.renderFeatures(host);
+                    this.updateFeatureMeta();
                     try {
-                        await Features.setGroup(g.id, false);
-                        this.renderFeatures(host);
-                        this.updateFeatureMeta();
+                        await pending;
                     } catch (err) { Core.toast('error', err?.message || String(err)); }
                 });
                 const fold = () => {
@@ -1753,12 +1811,11 @@
                     stateText.addEventListener('click', () => { if (!input.disabled) input.click(); });
 
                     input.addEventListener('change', async () => {
+                        const previousEnabled = pack.state === 'on';
                         // Mixed state is always a one-tap "complete setup" action.
                         const nextEnabled = pack.state === 'partial' ? true : !!input.checked;
                         input.checked = nextEnabled;
                         input.indeterminate = false;
-                        input.disabled = true;
-                        lab.classList.add('busy');
                         // optimistic: state class follows the click before refresh lands
                         lab.classList.remove('is-on', 'is-off', 'is-partial');
                         lab.classList.add(nextEnabled ? 'is-on' : 'is-off');
@@ -1768,7 +1825,9 @@
                         row.classList.add(nextEnabled ? 'is-on' : 'is-off');
                         stateText.textContent = nextEnabled ? 'เปิด' : 'ปิด';
                         try {
-                            await Features.setPack(pack, nextEnabled, { reload: false, quiet: false });
+                            const pending = Features.setPack(pack, nextEnabled, { reload: false, quiet: false });
+                            this.syncPackRow(row, pack);
+                            await pending;
                             this.syncPackRow(row, pack);
                             const onNow = items.filter((item) => item.state === 'on').length;
                             const groupSummary = head.querySelector('.oh-group-title small');
@@ -1777,8 +1836,12 @@
                             }
                             this.updateFeatureMeta();
                         } catch (err) {
-                            input.checked = pack.state === 'on';
-                            input.indeterminate = pack.state === 'partial';
+                            for (const prompt of pack.prompts) prompt.enabled = previousEnabled;
+                            pack.promptOn = previousEnabled ? pack.prompts.length : 0;
+                            pack.controlledOn = pack.promptOn;
+                            pack.state = previousEnabled ? 'on' : 'off';
+                            input.checked = previousEnabled;
+                            input.indeterminate = false;
                             lab.classList.remove('is-on', 'is-off');
                             lab.classList.add(`is-${pack.state}`);
                             toggleWrap.classList.remove('is-on', 'is-off', 'is-partial');
@@ -1788,9 +1851,6 @@
                             stateText.textContent = pack.state === 'partial' ? 'เปิดให้ครบ'
                                 : (pack.state === 'on' ? 'เปิด' : 'ปิด');
                             Core.toast('error', err?.message || String(err));
-                        } finally {
-                            input.disabled = false;
-                            lab.classList.remove('busy');
                         }
                     });
 
@@ -1846,30 +1906,29 @@
                 lab.appendChild(input);
                 lab.appendChild(slider);
                 input.addEventListener('change', async () => {
-                    input.disabled = true;
-                    lab.classList.add('busy');
+                    const previousEnabled = !e.script.disabled;
+                    const nextEnabled = !!input.checked;
                     lab.classList.remove('is-on', 'is-off');
-                    lab.classList.add(input.checked ? 'is-on' : 'is-off');
+                    lab.classList.add(nextEnabled ? 'is-on' : 'is-off');
                     row.classList.remove('is-on', 'is-off');
-                    row.classList.add(input.checked ? 'is-on' : 'is-off');
+                    row.classList.add(nextEnabled ? 'is-on' : 'is-off');
+                    // Mutates the live regex object synchronously; save is queued.
+                    const pending = Engine.setEnabled([e.script.id], nextEnabled);
                     try {
-                        await Engine.setEnabled([e.script.id], !!input.checked);
-                        await Engine.reloadChatIfNeeded();
-                        Core.toast('success', `${input.checked ? 'เปิด' : 'ปิด'}: ${e.script.scriptName}`);
-                        e.script.disabled = !input.checked;
-                        row.className = `oh-row is-${input.checked ? 'on' : 'off'}`;
+                        void Engine.reloadChatIfNeeded();
+                        Core.toast('success', `${nextEnabled ? 'เปิด' : 'ปิด'}: ${e.script.scriptName}`);
+                        await pending;
+                        row.className = `oh-row is-${nextEnabled ? 'on' : 'off'}`;
                         lab.classList.remove('is-on', 'is-off');
-                        lab.classList.add(input.checked ? 'is-on' : 'is-off');
+                        lab.classList.add(nextEnabled ? 'is-on' : 'is-off');
                     } catch (err) {
-                        input.checked = !input.checked;
+                        e.script.disabled = previousEnabled ? false : true;
+                        input.checked = previousEnabled;
                         lab.classList.remove('is-on', 'is-off');
-                        lab.classList.add(`is-${on ? 'on' : 'off'}`);
+                        lab.classList.add(`is-${previousEnabled ? 'on' : 'off'}`);
                         row.classList.remove('is-on', 'is-off');
-                        row.classList.add(`is-${on ? 'on' : 'off'}`);
+                        row.classList.add(`is-${previousEnabled ? 'on' : 'off'}`);
                         Core.toast('error', err?.message || String(err));
-                    } finally {
-                        input.disabled = false;
-                        lab.classList.remove('busy');
                     }
                 });
                 row.appendChild(nameBox);
