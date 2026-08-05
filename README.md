@@ -69,6 +69,5 @@ node selfcheck.mjs
 ```
 
 ## เครดิต / Credits
+![Uploading 7ac08547-4221-45a6-afa7-8716fa12505a.png…]()
 
-**Dev by Zeal & Nara**
-**อุทิศแด่ Omega preset — สาธุ 🙏**
