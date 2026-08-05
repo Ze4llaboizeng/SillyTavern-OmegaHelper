@@ -69,5 +69,6 @@ node selfcheck.mjs
 ```
 
 ## เครดิต / Credits
-![Uploading 7ac08547-4221-45a6-afa7-8716fa12505a.png…]()
+<img width="500" height="500" alt="7ac08547-4221-45a6-afa7-8716fa12505a" src="https://github.com/user-attachments/assets/a16a53fe-b9cd-4a19-b76e-1ebab3176340" />
+
 
