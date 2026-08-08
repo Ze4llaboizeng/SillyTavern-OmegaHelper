@@ -3,7 +3,7 @@
 ผู้ช่วยจัดการ Omega preset สำหรับ SillyTavern ใช้ง่ายบนมือถือและไม่กินสเปค
 A lightweight, mobile-friendly Omega preset manager for SillyTavern.
 
-**Version 1.2.2**
+**Version 1.3.0**
 **Dev by Zealllll & Xo.Nara**
 
 > อุทิศแด่ Omega preset — สาธุ 🙏
@@ -29,6 +29,10 @@ A lightweight, mobile-friendly Omega preset manager for SillyTavern.
   Checks and helps fix model reasoning settings.
 - บันทึกโปรไฟล์ Prompt + Regex ได้
   Saves Prompt + Regex profiles.
+- แสดงรายการเปลี่ยนแปลงก่อนใช้โปรไฟล์ เตือนเมื่อ preset ไม่ตรง และย้อนกลับได้หนึ่งครั้ง
+  Previews profile changes, warns on preset mismatch, and supports one-step undo.
+- ส่งออกและนำเข้าโปรไฟล์เป็นไฟล์ JSON สำหรับสำรองหรือย้ายเครื่อง
+  Export and import profiles as JSON for backup or migration.
 
 ## ติดตั้ง / Install
 
@@ -39,6 +43,9 @@ A lightweight, mobile-friendly Omega preset manager for SillyTavern.
 
 2. รีสตาร์ต SillyTavern แล้วเปิดใช้ **Omega Helper**
    Restart SillyTavern and enable **Omega Helper**.
+
+   ต้องใช้ SillyTavern **1.13.5** ขึ้นไป
+   Requires SillyTavern **1.13.5** or newer.
 
 3. รีเฟรชแบบไม่ใช้แคชด้วย `Ctrl + F5`
    Hard refresh with `Ctrl + F5`.
@@ -70,5 +77,4 @@ node selfcheck.mjs
 
 ## เครดิต / Credits
 
-**Dev by Zeal & Nara**
-**อุทิศแด่ Omega preset — สาธุ 🙏**
+<img width="500" height="500" alt="7ac08547-4221-45a6-afa7-8716fa12505a" src="https://github.com/user-attachments/assets/a16a53fe-b9cd-4a19-b76e-1ebab3176340" />

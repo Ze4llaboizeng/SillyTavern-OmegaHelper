@@ -13,6 +13,7 @@ import os from 'node:os';
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const css = fs.readFileSync(path.join(DIR, 'style.css'), 'utf8');
 const raw = fs.readFileSync(path.join(DIR, 'index.js'), 'utf8');
+const manifest = JSON.parse(fs.readFileSync(path.join(DIR, 'manifest.json'), 'utf8'));
 
 let fail = 0;
 const ok = (name, cond, extra = '') => {
@@ -103,6 +104,23 @@ ok('system prompts are protected from inline edits',
     raw.includes('prompt.marker || prompt.system_prompt'));
 ok('custom prompt editor is styled for phones',
     css.includes('.oh-prompt-editor') && /@media \(max-width:\s*768px\)[\s\S]*\.oh-prompt-editor-card/.test(css));
+ok('interactive panel controls use native buttons',
+    raw.includes('<button type="button" class="oh-tab')
+    && raw.includes('<button type="button" class="menu_button menu_button_icon" id="oh-close"'));
+ok('dialog restores focus and traps keyboard focus',
+    raw.includes('opener?.isConnected && opener.focus?.()') && raw.includes("e.key === 'Tab' && this.isOpen"));
+ok('minimum client version covers preset regex API', manifest.minimum_client_version === '1.13.5');
+ok('extension versions stay in sync', manifest.version === '1.3.0'
+    && raw.includes("const VERSION = '1.3.0'"));
+ok('profile apply previews changes and exposes one-step undo',
+    raw.includes('async preview(id)') && raw.includes('async undoLast()')
+    && raw.includes('id="oh-profile-undo"') && raw.includes('window.confirm?.(lines.join'));
+ok('panel refreshes coalesce and load independent state in parallel',
+    raw.includes('_refreshQueued = true')
+    && /Promise\.all\(\[\s*Features\.resolve\(\),\s*Engine\.isPresetAllowed\(\),\s*Prompts\.getOaiName\(\)/.test(raw));
+ok('UI retry stops when requested controls are ready', /if \(ready \|\| tries >= 40\) clearInterval\(timer\)/.test(raw));
+ok('mutation checks are batched to one animation frame',
+    /new MutationObserver[\s\S]*if \(uiFrame\) return;[\s\S]*requestAnimationFrame/.test(raw));
 
 // ============================== RUNTIME ==============================
 const noop = () => {};
@@ -196,8 +214,11 @@ const src = raw
     .replace("'/scripts/openai.js'", `'${stub.openai}'`)
     .replace("'/scripts/extensions/regex/engine.js'", `'${stub.engine}'`)
     .replace("'/scripts/power-user.js'", `'${stub.powerUser}'`)
-    .replace('    onReady();\n})();', '    globalThis.__OH__ = { Doctor, Watch, Core, Alerts, RequiredPrompts, Features, PatchNotice };\n    onReady();\n})();');
-if (src === raw) { console.error('boot rewrite matched nothing — assertions would be vacuous'); process.exit(1); }
+    .replace(/    onReady\(\);\r?\n\}\)\(\);/, '    globalThis.__OH__ = { Doctor, Watch, Core, Alerts, RequiredPrompts, Features, Profiles, PatchNotice, Panel };\n    onReady();\n})();');
+if (!src.includes('globalThis.__OH__ =')) {
+    console.error('test hook rewrite matched nothing — runtime assertions would be vacuous');
+    process.exit(1);
+}
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'oh-selfcheck-'));
 const boot = path.join(tmp, 'boot.mjs');
@@ -207,7 +228,8 @@ try {
 } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
 }
-const { Doctor, Watch, Core, Alerts, RequiredPrompts, Features, PatchNotice } = globalThis.__OH__;
+if (!globalThis.__OH__) { console.error('runtime test hook was not installed'); process.exit(1); }
+const { Doctor, Watch, Core, Alerts, RequiredPrompts, Features, Profiles, PatchNotice, Panel } = globalThis.__OH__;
 Object.assign(Core.getSettings(), { enabled: true, checkFormatting: true, watchReasoning: true, alerts: true });
 const issueIds = async () => (await Doctor.check()).issues.map((i) => i.id).sort();
 
@@ -344,6 +366,75 @@ ok('parses two-part JB version', JSON.stringify(PatchNotice.parseVersion('Custom
 ok('newer version compares above latest', PatchNotice.compare([3, 0, 0], [2, 4, 2]) > 0);
 ok('same version compares equal', PatchNotice.compare([2, 4, 2], [2, 4, 2]) === 0);
 ok('older version compares below latest', PatchNotice.compare([2, 4, 1], [2, 4, 2]) < 0);
+
+console.log('RUNTIME 11) healthy patch state stays quiet');
+let patchPopups = 0;
+const realPatchShow = PatchNotice.show;
+PatchNotice.show = () => { patchPopups += 1; return {}; };
+presetName = 'Gemini Omega 2.4.2';
+const healthyPatch = await PatchNotice.check();
+ok('latest preset does not open a popup', patchPopups === 0 && healthyPatch.relation === 0);
+presetName = 'Gemini Omega 2.4.1';
+await PatchNotice.check();
+ok('outdated preset opens one warning', patchPopups === 1);
+presetName = 'Custom JB 1.0';
+const skippedPatch = await PatchNotice.check();
+ok('unrelated preset never compares against Omega', skippedPatch.skipped && patchPopups === 1);
+PatchNotice.show = realPatchShow;
+
+console.log('RUNTIME 12) profile import validates and apply reports drift');
+const imported = Profiles.importData({
+    format: 'omega-helper-profiles', version: 1, profiles: [{
+        id: 'portable', name: 'Portable', promptOrder: [
+            { identifier: 'feature-lust', enabled: true },
+            { identifier: 'removed-prompt', enabled: true },
+        ], regex: [
+            { id: 'regex-lust', name: 'Lust Score', type: 'preset', enabled: false },
+            { id: 'removed-regex', name: 'Removed', type: 'preset', enabled: true },
+        ], oaiPreset: 'Gemini Omega 2.4.2',
+    }],
+});
+ok('valid backup imports', imported.length === 1 && Profiles.exportData().profiles.length === 1);
+presetName = 'Gemini Omega 4.2';
+const profilePreview = await Profiles.preview(imported[0].id);
+ok('preview detects preset mismatch without mutating state', profilePreview.presetMismatch
+    && profilePreview.report.prompt.changed === 1 && profilePreview.report.regex.changed === 1
+    && !lustOrder.enabled && !lustRegex.disabled);
+const appliedProfile = await Profiles.apply(imported[0].id);
+ok('apply reports missing prompt and regex', appliedProfile.report.prompt.matched === 1
+    && appliedProfile.report.prompt.total === 2
+    && appliedProfile.report.regex.matched === 1
+    && appliedProfile.report.regex.total === 2);
+const afterProfileApply = await Profiles.preview(imported[0].id);
+ok('apply captures undo and changes prompt + regex', !!Profiles.undoProfile
+    && afterProfileApply.report.prompt.changed === 0 && afterProfileApply.report.regex.changed === 0);
+await Profiles.undoLast();
+const afterProfileUndo = await Profiles.preview(imported[0].id);
+ok('undo restores prompt + regex and clears itself', afterProfileUndo.report.prompt.changed === 1
+    && afterProfileUndo.report.regex.changed === 1 && Profiles.undoProfile === null);
+let invalidImportThrew = false;
+try { Profiles.importData({ profiles: [] }); } catch (_) { invalidImportThrew = true; }
+ok('invalid backup is rejected', invalidImportThrew);
+
+console.log('RUNTIME 13) overlapping panel refreshes coalesce');
+const realRefreshNow = Panel.refreshNow;
+const realPanelRoot = Panel.root;
+let refreshRuns = 0;
+let releaseRefresh;
+Panel.root = {};
+Panel.refreshNow = () => {
+    refreshRuns += 1;
+    if (refreshRuns > 1) return Promise.resolve();
+    return new Promise((resolve) => { releaseRefresh = resolve; });
+};
+const firstRefresh = Panel.refresh();
+const overlappingRefresh = Panel.refresh();
+ok('overlapping callers share one promise', firstRefresh === overlappingRefresh);
+releaseRefresh();
+await firstRefresh;
+ok('overlap queues only one follow-up refresh', refreshRuns === 2);
+Panel.refreshNow = realRefreshNow;
+Panel.root = realPanelRoot;
 
 console.log(fail ? `\nFAILED: ${fail}` : `\nselfcheck: all assertions passed`);
 process.exit(fail ? 1 : 0);

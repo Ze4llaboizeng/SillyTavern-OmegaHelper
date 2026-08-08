@@ -1,6 +1,6 @@
 {
   "display_name": "Omega Helper",
-  "version": "1.2.2",
+  "version": "1.3.0",
   "author": "Zealllll & Xo.Nara",
   "description": "Manage Gemini Omega prompts by their real preset sections, with a separate regex view.",
   "js": "index.js",
@@ -8,5 +8,5 @@
   "loading_order": 210,
   "requires": [],
   "optional": [],
-  "minimum_client_version": "0.0.0"
+  "minimum_client_version": "1.13.5"
 }

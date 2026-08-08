@@ -1,4 +1,4 @@
-/* Omega Helper v1.2.2 — preset-ordered Prompt manager + separate Regex controls */
+/* Omega Helper v1.3.0 — preset-ordered Prompt manager + separate Regex controls */
 (() => {
     if (typeof window === 'undefined') { global.window = {}; }
     if (window.__OMEGA_HELPER_LOADED__) return;
@@ -7,7 +7,7 @@
     const MODULE_NAME = 'omegaHelper';
     const EXT_ID = 'omega-helper';
     const LOG = '[OmegaHelper]';
-    const VERSION = '1.2.2';
+    const VERSION = '1.3.0';
 
     /** Update this block together with the extension whenever Omega ships a JB patch. */
     const PATCH_NOTICE = {
@@ -645,6 +645,7 @@
     // Profiles (prompt_order + regex disabled map)
     // -----------------------------------------------------------------------
     const Profiles = {
+        undoProfile: null,
         list() {
             return Core.getSettings().profiles.slice().sort((a, b) => (b.updated || 0) - (a.updated || 0));
         },
@@ -702,9 +703,64 @@
             Core.saveSettings();
             return p;
         },
-        async apply(id) {
-            const p = this.get(id);
-            if (!p) throw new Error('ไม่พบโปรไฟล์');
+        async preview(id) {
+            const profile = this.get(id);
+            if (!profile) throw new Error('ไม่พบโปรไฟล์');
+            const [{ prompts, order }, regexAll, currentPreset] = await Promise.all([
+                Prompts.listLive(), Engine.listAll(), Prompts.getOaiName(),
+            ]);
+            const enabledById = new Map((order || [])
+                .filter((entry) => entry?.identifier != null)
+                .map((entry) => [String(entry.identifier), !!entry.enabled]));
+            const liveIds = new Set((prompts || []).map((prompt) => String(prompt.identifier)));
+            const promptRows = Array.isArray(profile.promptOrder) ? profile.promptOrder : [];
+            const matchedPromptIds = promptRows
+                .map((entry) => String(entry.identifier))
+                .filter((promptId) => liveIds.has(promptId));
+            const matchedSet = new Set(matchedPromptIds);
+            const currentOrder = (order || []).map((entry) => String(entry?.identifier ?? ''))
+                .filter((promptId) => matchedSet.has(promptId));
+
+            const byId = new Map(regexAll.map((entry) => [String(entry.script.id), entry]));
+            const byName = new Map(regexAll.map((entry) => [
+                `${entry.typeName}:${(entry.script.scriptName || '').toLowerCase()}`, entry,
+            ]));
+            const regexRows = Array.isArray(profile.regex) ? profile.regex : [];
+            let regexMatched = 0;
+            let regexChanged = 0;
+            for (const row of regexRows) {
+                const hit = (row.id ? byId.get(String(row.id)) : null)
+                    || (row.name ? byName.get(`${row.type}:${String(row.name).toLowerCase()}`) : null);
+                if (!hit) continue;
+                regexMatched += 1;
+                if ((!hit.script.disabled) !== !!row.enabled) regexChanged += 1;
+            }
+
+            const savedPreset = profile.oaiPreset ? String(profile.oaiPreset) : '';
+            const activePreset = currentPreset ? String(currentPreset) : '';
+            return {
+                profile,
+                savedPreset,
+                currentPreset: activePreset,
+                presetMismatch: !!savedPreset && !!activePreset
+                    && savedPreset.trim().toLowerCase() !== activePreset.trim().toLowerCase(),
+                report: {
+                    prompt: {
+                        matched: matchedPromptIds.length,
+                        total: promptRows.length,
+                        changed: promptRows.filter((entry) => liveIds.has(String(entry.identifier))
+                            && enabledById.get(String(entry.identifier)) !== !!entry.enabled).length,
+                        reordered: matchedPromptIds.join('\n') !== currentOrder.join('\n'),
+                    },
+                    regex: { matched: regexMatched, total: regexRows.length, changed: regexChanged },
+                },
+            };
+        },
+        async applyProfile(p) {
+            const report = {
+                prompt: { matched: 0, total: Array.isArray(p.promptOrder) ? p.promptOrder.length : 0, changed: 0 },
+                regex: { matched: 0, total: Array.isArray(p.regex) ? p.regex.length : 0, changed: 0 },
+            };
 
             // prompts
             if (Array.isArray(p.promptOrder) && p.promptOrder.length) {
@@ -719,10 +775,19 @@
                         list = { character_id: char.id ?? dummyId, order: [] };
                         lists.push(list);
                     }
-                    const snapIds = new Set(p.promptOrder.map((e) => e.identifier));
-                    const next = p.promptOrder.map((e) => ({ identifier: e.identifier, enabled: !!e.enabled }));
+                    const liveIds = new Set((pm.serviceSettings.prompts || [])
+                        .map((prompt) => String(prompt?.identifier ?? '')).filter(Boolean));
+                    const matched = p.promptOrder.filter((entry) => liveIds.has(String(entry.identifier)));
+                    report.prompt.matched = matched.length;
+                    const enabledById = new Map((list.order || []).map((entry) => [
+                        String(entry?.identifier ?? ''), !!entry?.enabled,
+                    ]));
+                    report.prompt.changed = matched.filter((entry) =>
+                        enabledById.get(String(entry.identifier)) !== !!entry.enabled).length;
+                    const snapIds = new Set(matched.map((e) => String(e.identifier)));
+                    const next = matched.map((e) => ({ identifier: e.identifier, enabled: !!e.enabled }));
                     for (const cur of list.order || []) {
-                        if (!snapIds.has(cur.identifier)) {
+                        if (!snapIds.has(String(cur.identifier))) {
                             next.push({ identifier: cur.identifier, enabled: !!cur.enabled });
                         }
                     }
@@ -738,15 +803,19 @@
             // regex soft-apply by id then name
             if (Array.isArray(p.regex) && p.regex.length) {
                 const all = await Engine.listAll();
-                const byId = new Map(all.map((e) => [e.script.id, e]));
-                const byName = new Map(all.map((e) => [(e.script.scriptName || '').toLowerCase(), e]));
+                const byId = new Map(all.map((e) => [String(e.script.id), e]));
+                const byName = new Map(all.map((e) => [
+                    `${e.typeName}:${(e.script.scriptName || '').toLowerCase()}`, e,
+                ]));
                 const byType = new Map();
                 for (const row of p.regex) {
-                    let hit = row.id ? byId.get(row.id) : null;
-                    if (!hit && row.name) hit = byName.get(String(row.name).toLowerCase());
+                    let hit = row.id ? byId.get(String(row.id)) : null;
+                    if (!hit && row.name) hit = byName.get(`${row.type}:${String(row.name).toLowerCase()}`);
                     if (!hit) continue;
+                    report.regex.matched += 1;
                     const wantDisabled = !row.enabled;
                     if (!!hit.script.disabled === wantDisabled) continue;
+                    report.regex.changed += 1;
                     hit.script.disabled = wantDisabled;
                     byType.set(hit.type, true);
                 }
@@ -756,16 +825,95 @@
             }
 
             const st = Core.getSettings();
-            st.lastProfileId = id;
+            if (this.get(p.id)) st.lastProfileId = p.id;
             Core.saveSettings();
             await Engine.reloadChatIfNeeded();
-            return p;
+            return { profile: p, report };
+        },
+        async apply(id) {
+            const p = this.get(id);
+            if (!p) throw new Error('ไม่พบโปรไฟล์');
+            this.undoProfile = {
+                id: '__undo__', name: 'ก่อนใช้โปรไฟล์ล่าสุด', created: Date.now(), updated: Date.now(),
+                ...await this.snapshot(),
+            };
+            return this.applyProfile(p);
+        },
+        async undoLast() {
+            if (!this.undoProfile) throw new Error('ไม่มีการใช้โปรไฟล์ให้ย้อนกลับ');
+            const undo = this.undoProfile;
+            this.undoProfile = null;
+            try {
+                return await this.applyProfile(undo);
+            } catch (err) {
+                this.undoProfile = undo;
+                throw err;
+            }
         },
         remove(id) {
             const st = Core.getSettings();
             st.profiles = st.profiles.filter((x) => x.id !== id);
             if (st.lastProfileId === id) st.lastProfileId = null;
             Core.saveSettings();
+        },
+        exportData() {
+            return {
+                format: 'omega-helper-profiles',
+                version: 1,
+                exportedAt: new Date().toISOString(),
+                profiles: this.list(),
+            };
+        },
+        importData(data) {
+            if (data?.format !== 'omega-helper-profiles' || data?.version !== 1 || !Array.isArray(data.profiles)) {
+                throw new Error('ไฟล์นี้ไม่ใช่โปรไฟล์ Omega Helper ที่รองรับ');
+            }
+            if (!data.profiles.length) throw new Error('ไฟล์นี้ไม่มีโปรไฟล์');
+            if (data.profiles.length > 200) throw new Error('ไฟล์มีโปรไฟล์มากเกิน 200 รายการ');
+
+            const st = Core.getSettings();
+            const ids = new Set(st.profiles.map((profile) => String(profile.id)));
+            const imported = data.profiles.map((profile) => {
+                const name = String(profile?.name || '').trim().slice(0, 160);
+                if (!name || !Array.isArray(profile?.promptOrder) || !Array.isArray(profile?.regex)) {
+                    throw new Error('ข้อมูลโปรไฟล์ไม่ครบ');
+                }
+                if (profile.promptOrder.length > 10000 || profile.regex.length > 10000) {
+                    throw new Error(`โปรไฟล์ “${name}” มีรายการมากเกินไป`);
+                }
+                const promptOrder = profile.promptOrder
+                    .filter((entry) => entry && entry.identifier != null)
+                    .map((entry) => ({ identifier: String(entry.identifier), enabled: !!entry.enabled }));
+                const regex = profile.regex
+                    .filter((entry) => entry && (entry.id != null || entry.name))
+                    .map((entry) => ({
+                        id: entry.id == null ? null : String(entry.id),
+                        name: String(entry.name || ''),
+                        type: String(entry.type || ''),
+                        enabled: !!entry.enabled,
+                    }));
+                let id = String(profile.id || '');
+                if (!id || ids.has(id)) id = Core.uid();
+                ids.add(id);
+                const now = Date.now();
+                return {
+                    id,
+                    name,
+                    created: Number.isFinite(profile.created) ? profile.created : now,
+                    updated: now,
+                    promptOrder,
+                    regex,
+                    promptOn: promptOrder.filter((entry) => entry.enabled).length,
+                    promptTotal: promptOrder.length,
+                    regexOn: regex.filter((entry) => entry.enabled).length,
+                    regexTotal: regex.length,
+                    oaiPreset: profile.oaiPreset == null ? null : String(profile.oaiPreset),
+                };
+            });
+            st.profiles.push(...imported);
+            st.lastProfileId = imported[0].id;
+            Core.saveSettings();
+            return imported;
         },
     };
 
@@ -826,14 +974,15 @@
                     ${o.body ? '<div class="oh-alert-body"></div>' : ''}
                     <div class="oh-alert-actions"></div>
                 </div>
-                <div class="oh-alert-close" role="button" tabindex="0" aria-label="ปิด"><i class="fa-solid fa-xmark"></i></div>
+                <button type="button" class="oh-alert-close" aria-label="ปิด"><i class="fa-solid fa-xmark"></i></button>
             `;
             card.querySelector('.oh-alert-title').textContent = o.title || '';
             if (o.body) card.querySelector('.oh-alert-body').textContent = o.body;
 
             const actionsHost = card.querySelector('.oh-alert-actions');
             for (const a of (o.actions || [])) {
-                const btn = document.createElement('div');
+                const btn = document.createElement('button');
+                btn.type = 'button';
                 btn.className = 'menu_button menu_button_icon oh-alert-btn' + (a.primary ? ' primary' : '');
                 btn.innerHTML = a.icon ? `<i class="fa-solid ${a.icon}"></i>` : '';
                 const span = document.createElement('span');
@@ -850,10 +999,6 @@
 
             const close = () => this.dismiss(card);
             card.querySelector('.oh-alert-close')?.addEventListener('click', close);
-            card.querySelector('.oh-alert-close')?.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter' || e.key === ' ') close();
-            });
-
             host.appendChild(card);
             requestAnimationFrame(() => card.classList.add('in'));
 
@@ -914,49 +1059,27 @@
             if (!PATCH_NOTICE?.id || !PATCH_NOTICE?.version || !PATCH_NOTICE?.sourceUrl) return null;
             try {
                 const preset = await Prompts.getOaiName();
+                if (!SUPPORTED_PRESET.test(String(preset || ''))) {
+                    return { skipped: true, preset };
+                }
                 const current = this.parseVersion(preset);
                 const latest = this.parseVersion(PATCH_NOTICE.version);
                 const isOmega = /omega/i.test(String(preset || ''));
                 const commonBody = `กำลังใช้: ${preset || 'ไม่ทราบชื่อ'}\nOmega ล่าสุด: ${PATCH_NOTICE.fileName}`;
 
                 if (!current || !latest) {
-                    return this.show({
-                        level: 'info',
-                        title: `มีประกาศแพตช์: ${PATCH_NOTICE.title}`,
-                        body: `${commonBody}\nอ่านเลขเวอร์ชันจากชื่อ preset ปัจจุบันไม่ได้`,
-                    });
+                    return { preset, current, latest, relation: null };
                 }
 
                 const relation = this.compare(current, latest);
-                if (isOmega && relation < 0) {
+                if (relation < 0) {
                     return this.show({
                         level: 'warn', primary: true,
-                        title: `Omega ที่ใช้อยู่เก่ากว่า ${PATCH_NOTICE.version}`,
+                        title: `${isOmega ? 'Omega' : 'JB'} ที่ใช้อยู่เก่ากว่า ${PATCH_NOTICE.version}`,
                         body: `${commonBody}\nควรดาวน์โหลดแพตช์ใหม่แล้วเปิดแชตใหม่`,
                     });
                 }
-                if (isOmega && relation === 0) {
-                    return this.show({
-                        level: 'ok',
-                        title: `Omega ${PATCH_NOTICE.version} เป็นเวอร์ชันล่าสุดแล้ว`,
-                        body: commonBody,
-                    });
-                }
-                if (isOmega && relation > 0) {
-                    return this.show({
-                        level: 'info',
-                        title: 'Omega ที่ใช้อยู่ใหม่กว่าประกาศล่าสุด',
-                        body: `${commonBody}\nยังไม่ต้องย้อนกลับไปใช้เวอร์ชันเก่า`,
-                    });
-                }
-
-                const relationText = relation > 0 ? 'ใหม่กว่า' : (relation < 0 ? 'เก่ากว่า' : 'เท่ากับ');
-                return this.show({
-                    level: relation < 0 ? 'warn' : 'info',
-                    title: `JB ปัจจุบัน ${relationText} Omega ${PATCH_NOTICE.version}`,
-                    body: `${commonBody}\nเปรียบเทียบจากเลขเวอร์ชันในชื่อ preset`,
-                    primary: relation < 0,
-                });
+                return { preset, current, latest, relation };
             } catch (err) {
                 console.warn(LOG, 'ตรวจเวอร์ชัน JB/Omega ไม่สำเร็จ', err);
                 return null;
@@ -1264,12 +1387,16 @@
         cache: null,
         _onKey: null,
         _searchTimer: null,
+        _opener: null,
+        _refreshPromise: null,
+        _refreshQueued: false,
 
         async show() {
             if (this.isOpen) {
                 await this.refresh();
                 return;
             }
+            this._opener = document.activeElement || null;
             this.isOpen = true;
             this.search = Core.getSettings().lastSearch || '';
             this.mount();
@@ -1292,6 +1419,9 @@
             this.root?.remove();
             this.root = null;
             document.body.classList.remove('oh-no-scroll', 'oh-open');
+            const opener = this._opener;
+            this._opener = null;
+            setTimeout(() => opener?.isConnected && opener.focus?.(), 0);
         },
         toggle() {
             if (this.isOpen) this.close();
@@ -1309,38 +1439,41 @@
                     <div id="oh-panel-header">
                         <h3><i class="fa-solid fa-bolt"></i> Omega Helper</h3>
                         <span class="oh-meta" id="oh-header-meta" title="version">v${VERSION}</span>
-                        <div class="menu_button menu_button_icon" id="oh-close" title="ปิด" aria-label="ปิด">
+                        <button type="button" class="menu_button menu_button_icon" id="oh-close" title="ปิด" aria-label="ปิด">
                             <i class="fa-solid fa-xmark"></i>
-                        </div>
+                        </button>
                     </div>
                     <div id="oh-panel-body">
                         <div class="oh-tabs" role="tablist">
-                            <div class="oh-tab active" data-tab="features" role="tab" title="Prompt ตามหมวดใน preset">Prompt</div>
-                            <div class="oh-tab" data-tab="regex" role="tab" title="Regex ของ preset/global/scoped">Regex</div>
+                            <button type="button" class="oh-tab active" data-tab="features" role="tab" aria-selected="true" aria-controls="oh-content" title="Prompt ตามหมวดใน preset">Prompt</button>
+                            <button type="button" class="oh-tab" data-tab="regex" role="tab" aria-selected="false" aria-controls="oh-content" tabindex="-1" title="Regex ของ preset/global/scoped">Regex</button>
                         </div>
                         <div class="oh-toolbar">
                             <label class="oh-search-box" for="oh-search">
                                 <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
                                 <input type="search" id="oh-search" class="text_pole" placeholder="ค้นหาฟีเจอร์หรือ Regex..." enterkeyhint="search" autocomplete="off" />
                             </label>
-                            <select id="oh-profile-select" class="text_pole" title="โปรไฟล์"></select>
+                            <select id="oh-profile-select" class="text_pole" title="โปรไฟล์" aria-label="โปรไฟล์"></select>
                         </div>
                         <div class="oh-toolbar oh-profile-actions">
-                            <div class="menu_button menu_button_icon" id="oh-profile-apply" title="ใช้โปรไฟล์"><i class="fa-solid fa-check"></i><span>ใช้</span></div>
-                            <div class="menu_button menu_button_icon" id="oh-profile-save" title="เซฟชุด"><i class="fa-solid fa-floppy-disk"></i><span>เซฟชุด</span></div>
-                            <div class="menu_button menu_button_icon" id="oh-profile-overwrite" title="ทับ"><i class="fa-solid fa-file-export"></i><span>ทับ</span></div>
-                            <div class="menu_button menu_button_icon" id="oh-profile-del" title="ลบ"><i class="fa-solid fa-trash"></i></div>
-                            <div class="menu_button menu_button_icon" id="oh-refresh" title="รีเฟรช"><i class="fa-solid fa-rotate"></i></div>
+                            <button type="button" class="menu_button menu_button_icon" id="oh-profile-apply" title="ใช้โปรไฟล์"><i class="fa-solid fa-check"></i><span>ใช้</span></button>
+                            <button type="button" class="menu_button menu_button_icon" id="oh-profile-save" title="เซฟชุด"><i class="fa-solid fa-floppy-disk"></i><span>เซฟชุด</span></button>
+                            <button type="button" class="menu_button menu_button_icon" id="oh-profile-overwrite" title="ทับ"><i class="fa-solid fa-file-export"></i><span>ทับ</span></button>
+                            <button type="button" class="menu_button menu_button_icon" id="oh-profile-undo" title="ย้อนการใช้โปรไฟล์ล่าสุด" disabled><i class="fa-solid fa-rotate-left"></i><span>ย้อนกลับ</span></button>
+                            <button type="button" class="menu_button menu_button_icon" id="oh-profile-del" title="ลบ" aria-label="ลบโปรไฟล์"><i class="fa-solid fa-trash"></i></button>
+                            <button type="button" class="menu_button menu_button_icon" id="oh-profile-export" title="ส่งออกทุกโปรไฟล์"><i class="fa-solid fa-download"></i><span>ส่งออกทั้งหมด</span></button>
+                            <button type="button" class="menu_button menu_button_icon" id="oh-profile-import" title="นำเข้าโปรไฟล์"><i class="fa-solid fa-upload"></i><span>นำเข้า</span></button>
+                            <button type="button" class="menu_button menu_button_icon" id="oh-refresh" title="รีเฟรช" aria-label="รีเฟรช"><i class="fa-solid fa-rotate"></i></button>
                         </div>
                         <p class="oh-status" id="oh-status">กำลังโหลด...</p>
                         <p class="oh-status oh-doctor-line" id="oh-doctor-line" hidden></p>
-                        <div id="oh-content"></div>
+                        <div id="oh-content" role="tabpanel"></div>
                     </div>
                     <div id="oh-panel-footer">
-                        <div class="menu_button menu_button_icon" id="oh-allow-preset"><i class="fa-solid fa-unlock"></i><span>Allow preset regex</span></div>
-                        <div class="menu_button menu_button_icon" id="oh-doctor" title="เช็ค Reasoning Formatting กับโมเดลปัจจุบัน"><i class="fa-solid fa-stethoscope"></i><span>เช็ค Reasoning</span></div>
-                        <div class="menu_button menu_button_icon" id="oh-open-pm" title="เลื่อนไป Prompt Manager"><i class="fa-solid fa-list-check"></i><span>Prompt Manager</span></div>
-                        <div class="menu_button menu_button_icon" id="oh-open-native"><i class="fa-solid fa-code"></i><span>Regex เต็ม</span></div>
+                        <button type="button" class="menu_button menu_button_icon" id="oh-allow-preset"><i class="fa-solid fa-unlock"></i><span>Allow preset regex</span></button>
+                        <button type="button" class="menu_button menu_button_icon" id="oh-doctor" title="เช็ค Reasoning Formatting กับโมเดลปัจจุบัน"><i class="fa-solid fa-stethoscope"></i><span>เช็ค Reasoning</span></button>
+                        <button type="button" class="menu_button menu_button_icon" id="oh-open-pm" title="เลื่อนไป Prompt Manager"><i class="fa-solid fa-list-check"></i><span>Prompt Manager</span></button>
+                        <button type="button" class="menu_button menu_button_icon" id="oh-open-native"><i class="fa-solid fa-code"></i><span>Regex เต็ม</span></button>
                     </div>
                 </div>
             `;
@@ -1352,21 +1485,39 @@
             overlay.querySelector('#oh-close')?.addEventListener('click', () => this.close());
 
             const st = Core.getSettings();
-            overlay.querySelectorAll('.oh-tab').forEach((tab) => {
-                if (tab.dataset.tab === st.activeTab) tab.classList.add('active');
-                else if (st.activeTab) tab.classList.remove('active');
-                tab.addEventListener('click', () => {
-                    overlay.querySelectorAll('.oh-tab').forEach((t) => t.classList.remove('active'));
-                    tab.classList.add('active');
-                    const s = Core.getSettings();
-                    s.activeTab = tab.dataset.tab;
-                    Core.saveSettings();
-                    this.render();
+            const tabs = [...overlay.querySelectorAll('.oh-tab')];
+            const activateTab = (tab, focus = false) => {
+                tabs.forEach((item) => {
+                    const active = item === tab;
+                    item.classList.toggle('active', active);
+                    item.setAttribute('aria-selected', String(active));
+                    item.tabIndex = active ? 0 : -1;
+                });
+                const s = Core.getSettings();
+                s.activeTab = tab.dataset.tab;
+                Core.saveSettings();
+                this.render();
+                if (focus) tab.focus();
+            };
+            tabs.forEach((tab) => {
+                const active = tab.dataset.tab === (st.activeTab || 'features');
+                tab.classList.toggle('active', active);
+                tab.setAttribute('aria-selected', String(active));
+                tab.tabIndex = active ? 0 : -1;
+                tab.addEventListener('click', () => activateTab(tab));
+                tab.addEventListener('keydown', (event) => {
+                    const index = tabs.indexOf(tab);
+                    const next = event.key === 'ArrowRight' ? tabs[(index + 1) % tabs.length]
+                        : event.key === 'ArrowLeft' ? tabs[(index - 1 + tabs.length) % tabs.length]
+                            : event.key === 'Home' ? tabs[0]
+                                : event.key === 'End' ? tabs[tabs.length - 1] : null;
+                    if (!next) return;
+                    event.preventDefault();
+                    activateTab(next, true);
                 });
             });
-            // ensure one active
-            if (!overlay.querySelector('.oh-tab.active')) {
-                overlay.querySelector('.oh-tab[data-tab="features"]')?.classList.add('active');
+            if (!tabs.some((tab) => tab.classList.contains('active')) && tabs[0]) {
+                activateTab(tabs[0]);
             }
 
             const searchEl = overlay.querySelector('#oh-search');
@@ -1387,13 +1538,47 @@
                 });
             }
 
+            const syncUndoButton = () => {
+                const button = overlay.querySelector('#oh-profile-undo');
+                if (button) button.disabled = !Profiles.undoProfile;
+            };
+            syncUndoButton();
             overlay.querySelector('#oh-refresh')?.addEventListener('click', () => this.refresh());
             overlay.querySelector('#oh-profile-apply')?.addEventListener('click', async () => {
                 const id = overlay.querySelector('#oh-profile-select')?.value;
                 if (!id) return Core.toast('info', 'เลือกโปรไฟล์ก่อน');
                 try {
-                    const p = await Profiles.apply(id);
-                    Core.toast('success', `ใช้: ${p.name}`);
+                    const preview = await Profiles.preview(id);
+                    const promptMissing = preview.report.prompt.total - preview.report.prompt.matched;
+                    const regexMissing = preview.report.regex.total - preview.report.regex.matched;
+                    const lines = [
+                        `ใช้โปรไฟล์ “${preview.profile.name}” ?`,
+                        `Prompt: เปลี่ยน ${preview.report.prompt.changed} · พบ ${preview.report.prompt.matched}/${preview.report.prompt.total}${preview.report.prompt.reordered ? ' · จัดลำดับใหม่' : ''}`,
+                        `Regex: เปลี่ยน ${preview.report.regex.changed} · พบ ${preview.report.regex.matched}/${preview.report.regex.total}`,
+                    ];
+                    if (promptMissing + regexMissing > 0) lines.push(`หาไม่พบ ${promptMissing + regexMissing} รายการ`);
+                    if (preview.presetMismatch) {
+                        lines.push(`⚠ โปรไฟล์จาก “${preview.savedPreset}” แต่ตอนนี้ใช้ “${preview.currentPreset}”`);
+                    }
+                    if (!(window.confirm?.(lines.join('\n')) ?? true)) return;
+                    const { profile, report } = await Profiles.apply(id);
+                    const matched = report.prompt.matched + report.regex.matched;
+                    const total = report.prompt.total + report.regex.total;
+                    const missing = total - matched;
+                    syncUndoButton();
+                    Core.toast(missing ? 'warning' : 'success',
+                        `ใช้: ${profile.name} · ตรง ${matched}/${total}${missing ? ` · ไม่พบ ${missing}` : ''}`);
+                    await this.refresh();
+                } catch (err) {
+                    syncUndoButton();
+                    Core.toast('error', err?.message || String(err));
+                }
+            });
+            overlay.querySelector('#oh-profile-undo')?.addEventListener('click', async () => {
+                try {
+                    await Profiles.undoLast();
+                    syncUndoButton();
+                    Core.toast('success', 'ย้อนกลับไปก่อนใช้โปรไฟล์แล้ว');
                     await this.refresh();
                 } catch (err) { Core.toast('error', err?.message || String(err)); }
             });
@@ -1423,6 +1608,35 @@
                 Profiles.remove(id);
                 Core.toast('info', 'ลบแล้ว');
                 this.fillProfiles();
+            });
+            overlay.querySelector('#oh-profile-export')?.addEventListener('click', () => {
+                try {
+                    const data = Profiles.exportData();
+                    if (!data.profiles.length) return Core.toast('info', 'ยังไม่มีโปรไฟล์ให้ส่งออก');
+                    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                    const url = URL.createObjectURL(blob);
+                    const link = document.createElement('a');
+                    link.href = url;
+                    link.download = `omega-helper-profiles-${new Date().toISOString().slice(0, 10)}.json`;
+                    link.click();
+                    URL.revokeObjectURL(url);
+                } catch (err) { Core.toast('error', err?.message || String(err)); }
+            });
+            overlay.querySelector('#oh-profile-import')?.addEventListener('click', () => {
+                const input = document.createElement('input');
+                input.type = 'file';
+                input.accept = 'application/json,.json';
+                input.addEventListener('change', async () => {
+                    const file = input.files?.[0];
+                    if (!file) return;
+                    if (file.size > 2 * 1024 * 1024) return Core.toast('error', 'ไฟล์ใหญ่เกิน 2 MB');
+                    try {
+                        const imported = Profiles.importData(JSON.parse(await file.text()));
+                        this.fillProfiles();
+                        Core.toast('success', `นำเข้า ${imported.length} โปรไฟล์`);
+                    } catch (err) { Core.toast('error', err?.message || String(err)); }
+                }, { once: true });
+                input.click();
             });
             overlay.querySelector('#oh-allow-preset')?.addEventListener('click', async () => {
                 try {
@@ -1454,16 +1668,31 @@
                 }, 200);
             });
 
-            if (Core.getSettings().closeOnEscape) {
-                this._onKey = (e) => {
-                    if (e.key === 'Escape' && this.isOpen) {
+            this._onKey = (e) => {
+                if (e.key === 'Escape' && this.isOpen && Core.getSettings().closeOnEscape) {
+                    e.preventDefault();
+                    this.close();
+                    return;
+                }
+                if (e.key === 'Tab' && this.isOpen) {
+                    const focusable = [...overlay.querySelectorAll(
+                        'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+                    )].filter((item) => !item.hidden && item.offsetParent !== null);
+                    if (!focusable.length) return;
+                    const first = focusable[0];
+                    const last = focusable[focusable.length - 1];
+                    if (e.shiftKey && document.activeElement === first) {
                         e.preventDefault();
-                        this.close();
+                        last.focus();
+                    } else if (!e.shiftKey && document.activeElement === last) {
+                        e.preventDefault();
+                        first.focus();
                     }
-                };
-                document.addEventListener('keydown', this._onKey);
-            }
+                }
+            };
+            document.addEventListener('keydown', this._onKey);
             this.fillProfiles();
+            setTimeout(() => searchEl?.focus(), 0);
         },
 
         fillProfiles() {
@@ -1480,17 +1709,38 @@
             else sel.value = '';
         },
 
-        async refresh() {
-            if (!this.root) return;
-            const status = this.root.querySelector('#oh-status');
+        refresh() {
+            if (this._refreshPromise) {
+                this._refreshQueued = true;
+                return this._refreshPromise;
+            }
+            this._refreshPromise = (async () => {
+                do {
+                    this._refreshQueued = false;
+                    await this.refreshNow();
+                } while (this._refreshQueued && this.root);
+            })().finally(() => {
+                this._refreshPromise = null;
+                this._refreshQueued = false;
+            });
+            return this._refreshPromise;
+        },
+
+        async refreshNow() {
+            const root = this.root;
+            if (!root) return;
+            const status = root.querySelector('#oh-status');
             try {
                 if (status) {
                     status.className = 'oh-status';
                     status.textContent = 'กำลังโหลด Chat Completion + regex...';
                 }
-                const resolved = await Features.resolve();
-                const allow = await Engine.isPresetAllowed();
-                const oai = await Prompts.getOaiName();
+                const [resolved, allow, oai] = await Promise.all([
+                    Features.resolve(),
+                    Engine.isPresetAllowed(),
+                    Prompts.getOaiName(),
+                ]);
+                if (this.root !== root) return;
                 const required = RequiredPrompts.inspect(resolved.promptPool);
                 this.cache = { ...resolved, allow, oai, required };
 
@@ -1521,7 +1771,7 @@
                         status.textContent = parts.join(' · ');
                     }
                 }
-                const meta = this.root.querySelector('#oh-header-meta');
+                const meta = root.querySelector('#oh-header-meta');
                 if (meta) meta.textContent = `${onFeats}/${resolved.packs.length}`;
                 this.fillProfiles();
                 this.render();
@@ -1706,18 +1956,19 @@
                 const collapsed = !!st.collapsedGroups['f:' + g.id] && !q;
                 const section = document.createElement('div');
                 section.className = 'oh-group' + (collapsed ? ' collapsed' : '');
+                const bodyId = `oh-group-${Core.uid()}`;
 
                 const head = document.createElement('div');
                 head.className = 'oh-group-head';
                 head.innerHTML = `
-                    <div class="oh-group-title">
+                    <button type="button" class="oh-group-title" aria-expanded="${!collapsed}" aria-controls="${bodyId}">
                         <b><i class="fa-solid ${Core.escape(g.meta.icon)}"></i> ${Core.escape(g.meta.title)}</b>
                         <small>${onCount}/${items.length} เปิด · ตามลำดับใน preset</small>
-                    </div>
+                    </button>
                     <div class="oh-group-actions">
-                        <div class="menu_button menu_button_icon oh-g-on" title="เปิดทั้งกลุ่ม"><i class="fa-solid fa-toggle-on"></i></div>
-                        <div class="menu_button menu_button_icon oh-g-off" title="ปิดทั้งกลุ่ม"><i class="fa-solid fa-toggle-off"></i></div>
-                        <div class="menu_button menu_button_icon oh-g-fold"><i class="fa-solid fa-chevron-${collapsed ? 'down' : 'up'}"></i></div>
+                        <button type="button" class="menu_button menu_button_icon oh-g-on" title="เปิดทั้งกลุ่ม" aria-label="เปิดทั้งกลุ่ม"><i class="fa-solid fa-toggle-on"></i></button>
+                        <button type="button" class="menu_button menu_button_icon oh-g-off" title="ปิดทั้งกลุ่ม" aria-label="ปิดทั้งกลุ่ม"><i class="fa-solid fa-toggle-off"></i></button>
+                        <button type="button" class="menu_button menu_button_icon oh-g-fold" aria-label="${collapsed ? 'ขยายกลุ่ม' : 'ยุบกลุ่ม'}" aria-expanded="${!collapsed}" aria-controls="${bodyId}"><i class="fa-solid fa-chevron-${collapsed ? 'down' : 'up'}"></i></button>
                     </div>
                 `;
                 head.querySelector('.oh-g-on')?.addEventListener('click', async (e) => {
@@ -1753,12 +2004,17 @@
                     Core.saveSettings();
                     const ic = head.querySelector('.oh-g-fold i');
                     if (ic) ic.className = `fa-solid fa-chevron-${next ? 'down' : 'up'}`;
+                    for (const control of head.querySelectorAll('.oh-group-title, .oh-g-fold')) {
+                        control.setAttribute('aria-expanded', String(!next));
+                    }
+                    head.querySelector('.oh-g-fold')?.setAttribute('aria-label', next ? 'ขยายกลุ่ม' : 'ยุบกลุ่ม');
                 };
                 head.querySelector('.oh-g-fold')?.addEventListener('click', (e) => { e.stopPropagation(); fold(); });
                 head.querySelector('.oh-group-title')?.addEventListener('click', fold);
 
                 const body = document.createElement('div');
                 body.className = 'oh-group-body';
+                body.id = bodyId;
 
                 for (const pack of items) {
                     shown += 1;
@@ -2008,13 +2264,13 @@
                                     gemini 3.5 flash-lite / 3.6 ขึ้นไป → Start Reply With ว่าง + เอาติ๊กออก
                                 </small>
                                 <div class="flex-container flexGap10 marginTop10">
-                                    <div id="oh-check-now" class="menu_button menu_button_icon"><i class="fa-solid fa-stethoscope"></i><span>เช็คเลย</span></div>
+                                    <button type="button" id="oh-check-now" class="menu_button menu_button_icon"><i class="fa-solid fa-stethoscope"></i><span>เช็คเลย</span></button>
                                 </div>
                             </div>
                         </div>
 
                         <div class="flex-container flexGap10 marginTop10">
-                            <div id="oh-open-now" class="menu_button menu_button_icon"><i class="fa-solid fa-sliders"></i><span>เปิดแผง</span></div>
+                            <button type="button" id="oh-open-now" class="menu_button menu_button_icon"><i class="fa-solid fa-sliders"></i><span>เปิดแผง</span></button>
                         </div>
                         <small class="oh-hint">
                             ใช้ API หลักของ SillyTavern เท่านั้น (Chat Completion Prompt Manager + Regex engine)
@@ -2117,13 +2373,19 @@
             btn.id = 'oh-wand-btn';
             btn.className = 'list-group-item flex-container flexGap5 interactable';
             btn.tabIndex = 0;
-            btn.setAttribute('role', 'listitem');
+            btn.setAttribute('role', 'button');
             btn.title = 'Omega Helper';
             btn.innerHTML = `
                 <div class="fa-fw fa-solid fa-bolt extensionsMenuExtensionButton"></div>
                 <span>Omega Helper</span>
             `;
             btn.addEventListener('click', () => Panel.show());
+            btn.addEventListener('keydown', (event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    Panel.show();
+                }
+            });
             menu.appendChild(btn);
         },
 
@@ -2293,15 +2555,24 @@
             UI.injectSettings();
             UI.injectQuickButton();
             UI.injectWandButton();
-            if (tries >= 40) clearInterval(timer);
+            const s = Core.getSettings();
+            const ready = document.getElementById(`${EXT_ID}-settings`)
+                && (!s.enabled || !s.showQuickButton || document.getElementById('oh-quick-btn-wrapper'))
+                && (!s.enabled || !s.showWandButton || document.getElementById('oh-wand-btn'));
+            if (ready || tries >= 40) clearInterval(timer);
         }, 500);
 
         const observeTarget = document.getElementById('send_form')?.parentElement || document.body;
         try {
+            let uiFrame = 0;
             const mo = new MutationObserver(() => {
-                const s = Core.getSettings();
-                if (s.enabled && s.showQuickButton && !document.getElementById('oh-quick-btn-wrapper')) UI.injectQuickButton();
-                if (s.enabled && s.showWandButton && !document.getElementById('oh-wand-btn')) UI.injectWandButton();
+                if (uiFrame) return;
+                uiFrame = requestAnimationFrame(() => {
+                    uiFrame = 0;
+                    const s = Core.getSettings();
+                    if (s.enabled && s.showQuickButton && !document.getElementById('oh-quick-btn-wrapper')) UI.injectQuickButton();
+                    if (s.enabled && s.showWandButton && !document.getElementById('oh-wand-btn')) UI.injectWandButton();
+                });
             });
             mo.observe(observeTarget, { childList: true, subtree: true });
         } catch (_) {}

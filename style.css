@@ -258,6 +258,8 @@ body.oh-open #oh-quick-btn {
   border-radius: 999px;
   border: none;
   background: transparent;
+  color: inherit;
+  font-family: inherit;
   cursor: pointer;
   font-size: 0.88em;
   line-height: 1.2;
@@ -395,6 +397,13 @@ body.oh-open #oh-quick-btn {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
 .oh-group-title b {
@@ -799,6 +808,19 @@ body.oh-open #oh-quick-btn {
   border-radius: var(--oh-r-sm);
 }
 
+#oh-panel button,
+.oh-settings button,
+.oh-alert button {
+  font-family: inherit;
+}
+
+#oh-panel button:focus-visible,
+.oh-settings button:focus-visible,
+.oh-alert button:focus-visible {
+  outline: 2px solid var(--oh-accent);
+  outline-offset: 2px;
+}
+
 #oh-panel-footer .menu_button {
   flex: 1 1 auto;
   justify-content: center;
@@ -917,6 +939,11 @@ body.oh-open {
   align-items: center;
   justify-content: center;
   border-radius: 6px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
   cursor: pointer;
   opacity: 0.55;
   -webkit-tap-highlight-color: transparent;
