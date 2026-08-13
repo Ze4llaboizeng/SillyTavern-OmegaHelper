@@ -194,6 +194,7 @@ body.oh-open #oh-quick-btn {
   font-variant-numeric: tabular-nums;
 }
 
+#oh-panel-header #oh-guide,
 #oh-panel-header #oh-close {
   flex: 0 0 auto;
   min-width: var(--oh-tap);
@@ -201,6 +202,44 @@ body.oh-open #oh-quick-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+}
+
+/* ============================ Beginner guide ============================ */
+.oh-guide {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  z-index: 12;
+  max-width: 520px;
+  margin-inline: auto;
+  padding: 14px;
+  border: 1px solid var(--oh-accent);
+  border-radius: var(--oh-r-md);
+  background: var(--oh-surface);
+  box-shadow: 0 4px 24px rgb(0 0 0 / 55%);
+}
+
+.oh-guide-count {
+  margin-bottom: 4px;
+  color: var(--oh-accent);
+  font-size: 0.76em;
+  font-variant-numeric: tabular-nums;
+}
+
+.oh-guide.is-top { top: 12px; bottom: auto; }
+.oh-guide-title { display: block; font-size: 1em; }
+.oh-guide-body { margin: 6px 0 12px; line-height: 1.5; font-size: 0.88em; }
+.oh-guide-actions { display: flex; justify-content: flex-end; gap: 7px; }
+.oh-guide-actions .menu_button { min-height: var(--oh-tap); }
+.oh-guide-open > :not(.oh-guide) { pointer-events: none; }
+
+.oh-guide-focus {
+  position: relative;
+  z-index: 10;
+  outline: 3px solid var(--oh-accent);
+  outline-offset: 3px;
+  border-radius: var(--oh-r-sm);
 }
 
 /* ---- body / footer ---- */

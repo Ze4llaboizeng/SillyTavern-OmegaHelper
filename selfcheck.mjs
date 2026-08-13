@@ -12,8 +12,14 @@ import os from 'node:os';
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const css = fs.readFileSync(path.join(DIR, 'style.css'), 'utf8');
-const raw = fs.readFileSync(path.join(DIR, 'index.js'), 'utf8');
+const entryRaw = fs.readFileSync(path.join(DIR, 'index.js'), 'utf8');
+const entryModules = ['config.js', 'prompts.js', 'features.js', 'reasoning.js', 'panel.js'];
+const moduleFiles = ['config.js', 'prompts.js', 'features.js', 'reasoning.js',
+    'guide.js', 'panel-view.js', 'ui.js', 'panel.js'];
+const moduleSources = moduleFiles.map((file) => fs.readFileSync(path.join(DIR, 'src', file), 'utf8'));
+const raw = [...moduleSources, entryRaw].join('\n');
 const manifest = JSON.parse(fs.readFileSync(path.join(DIR, 'manifest.json'), 'utf8'));
+const omega = JSON.parse(fs.readFileSync(path.join(DIR, 'Gemini Omega 3.0 (14-8-26).json'), 'utf8'));
 
 let fail = 0;
 const ok = (name, cond, extra = '') => {
@@ -53,23 +59,41 @@ ok('mobile footer uses compact 2-column grid',
     /@media \(max-width:\s*768px\)[\s\S]*#oh-panel-footer[^}]*display:\s*grid[^}]*grid-template-columns:\s*repeat\(2,/m.test(css));
 
 console.log('STATIC 4) source contracts');
+ok('entrypoint only wires domain modules', entryRaw.split(/\r?\n/).length < 300
+    && entryModules.every((file) => entryRaw.includes(`./src/${file}`)));
 ok('planning template constant', /REASONING_TEMPLATE = \{ prefix: '<planning>', suffix: '<\/planning>' \}/.test(raw));
 ok('fix() writes #reasoning_prefix', raw.includes("$('#reasoning_prefix').val(REASONING_TEMPLATE.prefix)"));
 ok('fix() writes #reasoning_suffix', raw.includes("$('#reasoning_suffix').val(REASONING_TEMPLATE.suffix)"));
 ok('Omega/5EX gate present', raw.includes('SUPPORTED_PRESET'));
 ok('watch popup is immediate', /cooldown: 0, \/\/ think broken/.test(raw));
+ok('watch reads the native reasoning DOM with saved-object fallback',
+    raw.includes('.mes_reasoning`')
+    && raw.includes('message?.extra?.reasoning'));
+ok('think checker is independent from formatting doctor',
+    /async run\(messageId,[\s\S]*watchReasoning[\s\S]*Prompts\.getOaiName\(\)/.test(raw)
+    && !raw.slice(raw.indexOf('const Watch ='), raw.indexOf('const Guide =')).includes('Doctor.fix()'));
+ok('message hooks pass the exact reply id',
+    raw.includes('const onMessage = (messageId)') && raw.includes('Watch.run(messageId)')
+    && raw.includes('et.CHARACTER_MESSAGE_RENDERED'));
+ok('chat load checks every non-greeting think without invoking formatting doctor',
+    /et\.CHAT_CHANGED[\s\S]*Watch\.run\(undefined, \{ showOk: true \}\)/.test(raw)
+    && !raw.slice(raw.indexOf('if (et.CHAT_CHANGED)'), raw.indexOf('if (et.CHATCOMPLETION_MODEL_CHANGED)')).includes('Doctor.audit'));
 for (const cls of ['oh-row', 'oh-toggle', 'oh-slider', 'oh-badge', 'oh-alert', 'oh-tab']) {
     ok(`index.js emits .${cls}`, raw.includes(cls));
 }
 ok('alert setting id does not collide with popup host',
     raw.includes('id="oh-alerts-enabled"') && !/<input[^>]+id="oh-alerts"/.test(raw));
 ok('search rendering is debounced', /_searchTimer\s*=\s*setTimeout\([\s\S]*?this\.render\(\);[\s\S]*?140\);/.test(raw));
+ok('search never persists a stale filter across panel sessions',
+    /async show\(\)[\s\S]*this\.search = ''/.test(raw) && !raw.includes('lastSearch'));
 ok('generation waits for required Sigil prompts',
     /GENERATION_STARTED[\s\S]*async \(_type, _opts, dryRun\)[\s\S]*await RequiredPrompts\.enforce\(\)/.test(raw));
 ok('group changes are batched', /async setGroup[\s\S]*this\.setPacks\(subset, enabled/.test(raw));
 ok('current Omega patch notice is bundled',
-    raw.includes("id: 'gemini-omega-2.4.2-2026-06-07'")
-    && raw.includes('1512886868872659146'));
+    raw.includes("id: 'gemini-omega-2.6-2026-08-15'")
+    && raw.includes('1537440603019808869'));
+ok('patch popup links to the existing beginner guide',
+    /label: 'คู่มือมือใหม่'[\s\S]*app\.Panel\?\.show[\s\S]*app\.Guide\?\.start/.test(raw));
 ok('patch version is checked once during boot', /function boot\(\)[\s\S]*boot\.done[\s\S]*PatchNotice\.check\(\)/.test(raw));
 ok('patch version rechecks after preset change', /OAI_PRESET_CHANGED_AFTER[\s\S]*await PatchNotice\.check\(\)/.test(raw));
 ok('mixed state uses an actionable Thai label',
@@ -107,11 +131,39 @@ ok('custom prompt editor is styled for phones',
 ok('interactive panel controls use native buttons',
     raw.includes('<button type="button" class="oh-tab')
     && raw.includes('<button type="button" class="menu_button menu_button_icon" id="oh-close"'));
+ok('beginner guide has a visible entry point and focus treatment',
+    raw.includes('id="oh-guide"') && css.includes('.oh-guide-focus'));
+ok('beginner guide scrolls each explained control into view',
+    /const Guide = \{[\s\S]*scrollIntoView\?\.\(\{ behavior: 'smooth'/.test(raw));
+ok('beginner guide targets prompt identity and never guesses the first visible row',
+    raw.includes('row.dataset.guideName') && raw.includes('section.dataset.guideGroup')
+    && raw.includes('this.steps.filter((step) => this.target(step))')
+    && raw.includes('if (step.find) return named || null')
+    && !/targets\.find\(\(item\) => item\.offsetParent/.test(raw));
+ok('beginner guide targets the real L2 prompt row',
+    raw.includes("find: 'L2 Balanced (50:50)', group: 'Prose Floor'")
+    && !raw.includes('id="oh-beginner-l2"'));
+const guideSource = raw.slice(raw.indexOf('const Guide ='), raw.indexOf('const Panel ='));
+const guideFinds = [...guideSource.matchAll(/\{ find: '([^']+)'/g)].map((match) => match[1]);
+const omegaGuideOrder = new Set((omega.prompt_order.find((list) => list.character_id === 100001)?.order || [])
+    .map((entry) => String(entry.identifier)));
+const omegaGuideNames = omega.prompts.filter((prompt) => omegaGuideOrder.has(String(prompt.identifier)))
+    .map((prompt) => String(prompt.name || '').normalize('NFKC'));
+ok('every named guide target exists in current Omega prompt_order',
+    guideFinds.every((find) => omegaGuideNames.some((name) => name.includes(find.normalize('NFKC')))),
+    guideFinds.filter((find) => !omegaGuideNames.some((name) => name.includes(find.normalize('NFKC')))).join(', '));
+ok('guide waits for panel data and temporarily clears search',
+    /async start\(root\)[\s\S]*await (?:app\.)?Panel\.refresh\(\)[\s\S]*(?:app\.)?Panel\.search = ''/.test(raw));
+ok('beginner guide covers every Omega engine and a safe starter recipe',
+    ['Helios (All-rounder)', 'Luna (Storyteller)', 'Aether (World Expansion)',
+        'Aphrodite (Romance)', 'Pantheon (Debation)', 'L2 Balanced']
+        .every((name) => raw.includes(name))
+    && raw.includes('Helios + ภาษาไทย + บุคคลที่สาม Default + Dynamic + L2 Balanced'));
 ok('dialog restores focus and traps keyboard focus',
     raw.includes('opener?.isConnected && opener.focus?.()') && raw.includes("e.key === 'Tab' && this.isOpen"));
 ok('minimum client version covers preset regex API', manifest.minimum_client_version === '1.13.5');
-ok('extension versions stay in sync', manifest.version === '1.3.0'
-    && raw.includes("const VERSION = '1.3.0'"));
+ok('extension versions stay in sync', manifest.version === '1.6.3'
+    && raw.includes("const VERSION = '1.6.3'"));
 ok('profile apply previews changes and exposes one-step undo',
     raw.includes('async preview(id)') && raw.includes('async undoLast()')
     && raw.includes('id="oh-profile-undo"') && raw.includes('window.confirm?.(lines.join'));
@@ -121,6 +173,19 @@ ok('panel refreshes coalesce and load independent state in parallel',
 ok('UI retry stops when requested controls are ready', /if \(ready \|\| tries >= 40\) clearInterval\(timer\)/.test(raw));
 ok('mutation checks are batched to one animation frame',
     /new MutationObserver[\s\S]*if \(uiFrame\) return;[\s\S]*requestAnimationFrame/.test(raw));
+
+console.log('STATIC 5) real ES module wiring');
+const modularApp = {};
+const [{ createPromptServices }, { createFeatureServices }, { createReasoningServices }, { createPanelServices }] = await Promise.all([
+    import('./src/prompts.js'), import('./src/features.js'), import('./src/reasoning.js'), import('./src/panel.js'),
+]);
+Object.assign(modularApp, createPromptServices());
+Object.assign(modularApp, createFeatureServices(modularApp));
+Object.assign(modularApp, createReasoningServices(modularApp));
+Object.assign(modularApp, createPanelServices(modularApp));
+const serviceNames = ['Core', 'Prompts', 'RequiredPrompts', 'Engine', 'Features', 'Profiles',
+    'Alerts', 'PatchNotice', 'Doctor', 'Watch', 'Guide', 'Panel', 'UI'];
+ok('all domain services compose through the entrypoint contract', serviceNames.every((name) => modularApp[name]));
 
 // ============================== RUNTIME ==============================
 const noop = () => {};
@@ -142,7 +207,8 @@ const requiredPromptNames = [
 globalThis.__PROMPTS__ = [
     ...requiredPromptNames.map((name, i) => ({ identifier: `sigil-${i}`, name })),
     { identifier: 'heading-format', name: '👇| **Format** (รูปแบบ) ↴' },
-    { identifier: 'feature-aether', name: 'Aether (World Expansion)' },
+    { identifier: 'feature-aether', name: 'Aether (World Expansion)', content: `<planning>
+//-- STAGE 10 [DECISION · freshest, strongest pull]: NPC SIMULATION --//` },
     { identifier: 'divider-format', name: '─── ⋆⋅☆⋅⋆ ───── ⋆⋅☆⋅⋆ ──── 4' },
     { identifier: 'feature-nexus', name: '(UI) Nexus UI' },
     { identifier: 'feature-lust', name: 'Lust Score' },
@@ -160,6 +226,7 @@ globalThis.__PM_SAVES__ = 0;
 globalThis.__PM_RENDERS__ = 0;
 globalThis.__REGEX_SAVES__ = 0;
 globalThis.__PU__ = power_user;
+globalThis.__CLICKABLE_EXT__ = null;
 Object.defineProperty(globalThis, '__MODEL__', { get: () => model });
 Object.defineProperty(globalThis, '__PRESET__', { get: () => presetName });
 
@@ -177,6 +244,7 @@ export function saveScriptsByType(){globalThis.__REGEX_SAVES__++}
 export function getCurrentPresetAPI(){return'openai'} export function getCurrentPresetName(){return globalThis.__PRESET__}
 export function isPresetScriptsAllowed(){return true} export function allowPresetScripts(){}`),
     powerUser: dataUrl('export const power_user = globalThis.__PU__;'),
+    extensions: dataUrl('export function findExtension(){return globalThis.__CLICKABLE_EXT__}'),
 };
 
 // Minimal DOM. querySelector MUST resolve children: Alerts.show() writes into
@@ -189,7 +257,11 @@ const el = () => ({
     querySelector: (s) => (String(s).startsWith('.oh-alert[') ? null : el()), querySelectorAll: () => [],
 });
 global.window = global;
-global.document = { body: el(), hidden: false, getElementById: () => null, querySelector: () => null,
+const reasoningDom = new Map();
+global.document = { body: el(), hidden: false, getElementById: () => null, querySelector: (selector) => {
+    const id = String(selector).match(/mesid="(\d+)"/)?.[1];
+    return id && reasoningDom.has(Number(id)) ? { textContent: reasoningDom.get(Number(id)) } : null;
+},
     querySelectorAll: () => [], createElement: el, createDocumentFragment: el, addEventListener: noop };
 global.MutationObserver = class { observe() {} disconnect() {} };
 global.toastr = { success: noop, info: noop, error: noop, warning: noop };
@@ -210,11 +282,15 @@ const ctx = { extensionSettings: {}, saveSettingsDebounced: noop, reloadCurrentC
     chat: [], eventSource: { on: noop }, event_types: {} };
 global.SillyTavern = { getContext: () => ctx };
 
-const src = raw
+const stripModuleSyntax = (source) => source
+    .replace(/^import .*?;\r?\n/gm, '')
+    .replace(/^export /gm, '');
+const src = [...moduleSources.map(stripModuleSyntax), stripModuleSyntax(entryRaw)].join('\n')
     .replace("'/scripts/openai.js'", `'${stub.openai}'`)
     .replace("'/scripts/extensions/regex/engine.js'", `'${stub.engine}'`)
+    .replace("'/scripts/extensions.js'", `'${stub.extensions}'`)
     .replace("'/scripts/power-user.js'", `'${stub.powerUser}'`)
-    .replace(/    onReady\(\);\r?\n\}\)\(\);/, '    globalThis.__OH__ = { Doctor, Watch, Core, Alerts, RequiredPrompts, Features, Profiles, PatchNotice, Panel };\n    onReady();\n})();');
+    .replace(/    onReady\(\);\r?\n\}\)\(\);/, '    globalThis.__OH__ = { Doctor, Watch, Core, Alerts, RequiredPrompts, Features, Profiles, PatchNotice, Guide, Panel };\n    onReady();\n})();');
 if (!src.includes('globalThis.__OH__ =')) {
     console.error('test hook rewrite matched nothing — runtime assertions would be vacuous');
     process.exit(1);
@@ -229,9 +305,18 @@ try {
     fs.rmSync(tmp, { recursive: true, force: true });
 }
 if (!globalThis.__OH__) { console.error('runtime test hook was not installed'); process.exit(1); }
-const { Doctor, Watch, Core, Alerts, RequiredPrompts, Features, Profiles, PatchNotice, Panel } = globalThis.__OH__;
+const { Doctor, Watch, Core, Alerts, RequiredPrompts, Features, Profiles, PatchNotice, Guide, Panel } = globalThis.__OH__;
 Object.assign(Core.getSettings(), { enabled: true, checkFormatting: true, watchReasoning: true, alerts: true });
 const issueIds = async () => (await Doctor.check()).issues.map((i) => i.id).sort();
+
+console.log('RUNTIME 0) beginner guide opens before resolving targets');
+const guideRoot = el();
+await Guide.start(guideRoot);
+ok('guide opens', Guide.root === guideRoot && Guide.step === 0);
+Guide.move(1);
+ok('guide advances', Guide.step === 1);
+Guide.close();
+ok('guide closes', Guide.root === null);
 
 console.log('RUNTIME 1) model classification (parsed version, not a hardcoded list)');
 const cls = (m) => Doctor.classify(m).rule?.id ?? null;
@@ -286,18 +371,38 @@ for (const [m, srw, show] of [['gemini-3.5-flash', '<planning>', true],
         power_user.reasoning.prefix === '<planning>' && power_user.reasoning.suffix === '</planning>');
 }
 
-console.log('RUNTIME 6) broken think pops instantly, never suppressed');
+console.log('RUNTIME 6) native reasoning blocks are checked, greeting is skipped');
 model = 'gemini-3.5-flash';
 await Doctor.fix();
-ctx.chat = [{ is_user: false, is_system: false, mes: '<planning>cut off mid thought' }];
-ok('1st reply reports', (await Watch.run())?.some((p) => p.id === 'thinkUnclosed'));
-ok('2nd back-to-back also reports', (await Watch.run())?.some((p) => p.id === 'thinkUnclosed'));
+ctx.chat = [{ is_user: false, is_system: false, extra: { reasoning: '' } }];
+ok('greeting #0 is skipped', (await Watch.run(0)) === null && !Alerts.shown.has('watch'));
+ctx.chat.push(
+    { is_user: true, is_system: false, mes: 'hello' },
+    { is_user: false, is_system: false, mes: 'visible reply', extra: { reasoning: 'STAGE 1 only' } },
+);
+ok('missing strongest stage reports', (await Watch.run(2))?.some((p) => p.id === 'strongestStageMissing'));
+ok('same reasoning block checked again also reports', (await Watch.run(2))?.some((p) => p.id === 'strongestStageMissing'));
 ok('alert registered', Alerts.shown.has('watch'));
-ctx.chat = [{ is_user: false, is_system: false, mes: 'clean reply, no tags' }];
-ok('clean reply clears', (await Watch.run()).length === 0);
-power_user.reasoning.prefix = 'WRONG'; // detection must not depend on live settings
-ctx.chat = [{ is_user: false, is_system: false, mes: '<planning>still detectable' }];
-ok('detects via constant, not settings', (await Watch.run())?.some((p) => p.id === 'thinkUnclosed'));
+ctx.chat[2].extra.reasoning = 'STAGE 10 NPC SIMULATION';
+ok('clean reply clears', (await Watch.run(2)).length === 0);
+reasoningDom.set(2, 'STAGE 1 rendered in the native block');
+ctx.chat[2].extra.reasoning = 'STAGE 10 saved but stale';
+Core.getSettings().checkFormatting = false;
+ok('native .mes_reasoning content is preferred over stale saved data',
+    (await Watch.run(2))?.some((p) => p.id === 'strongestStageMissing'));
+reasoningDom.delete(2);
+Core.getSettings().checkFormatting = true;
+ctx.chat.push(
+    { is_user: true, is_system: false, mes: 'again' },
+    { is_user: false, is_system: false, mes: 'reply 2', extra: { reasoning: 'STAGE 1 only' } },
+);
+ok('chat-load scan checks all replies and identifies the broken message',
+    (await Watch.run())?.some((p) => p.messageId === 4 && p.id === 'strongestStageMissing'));
+ctx.chat[4].extra.reasoning = 'S10 complete';
+ok('chat-load success path can report completion',
+    (await Watch.run(undefined, { showOk: true })).length === 0 && Alerts.shown.has('watch-ok'));
+ctx.chat = [ctx.chat[0]];
+ok('new chat containing only greeting has nothing to inspect', (await Watch.run()) === null);
 
 console.log('RUNTIME 7) required Sigil prompts are enabled before every Omega generation');
 ok('all 15 known Sigil prompts match', requiredPromptNames.every((name) => RequiredPrompts.matches(name)));
@@ -329,6 +434,19 @@ ok('heading prompts are marked as structure', sectioned[0].sectionHeader && sect
 ok('ornamental Tibetan divider is structure, not a prompt',
     Features.isDivider('⁺‧₊˚ ཐི⋆♱⋆ཋྀ ˚₊‧⁺ ⁺‧₊˚ ཐི⋆♱⋆ཋྀ ˚₊‧⁺'));
 ok('real decorated prompt name is not a divider', !Features.isDivider('🌌──Aether (World Expansion)──⭐'));
+const omegaOrder = omega.prompt_order.find((list) => list.character_id === 100001)?.order || [];
+const omegaPromptById = new Map(omega.prompts.map((prompt) => [String(prompt.identifier), prompt]));
+const omegaEnabledById = new Map(omegaOrder.map((entry) => [String(entry.identifier), !!entry.enabled]));
+const omegaSectioned = Features.assignPresetSections(omegaOrder.map((entry, orderIndex) => ({
+    ...omegaPromptById.get(String(entry.identifier)),
+    enabled: omegaEnabledById.get(String(entry.identifier)), inOrder: true, orderIndex,
+})).filter((prompt) => prompt.identifier));
+const omegaLength = omegaSectioned.filter((prompt) => prompt.section?.title === 'Length'
+    && !prompt.marker && !prompt.sectionHeader && !prompt.sectionDivider);
+ok('current Omega Length renders all seven options',
+    omegaLength.length === 7
+    && ['Chat Mode', 'Chatty', 'Short', 'Medium', 'Long', 'Extended', 'Dynamic']
+        .every((name) => omegaLength.some((prompt) => prompt.name.includes(name))));
 presetName = 'Gemini Omega 4.2';
 const lustOrder = globalThis.__ORDER__.find((e) => e.identifier === 'feature-lust');
 const lustRegex = globalThis.__REGEX__[0];
@@ -350,18 +468,57 @@ lustRegex.disabled = false;
 await Features.setPack(lustPack, false, { reload: false, quiet: true });
 ok('prompt toggle leaves Regex untouched', !lustOrder.enabled && !lustRegex.disabled);
 
-console.log('RUNTIME 9) inspect() false-positive guards');
-const T = { prefix: '<planning>', suffix: '</planning>' };
-const ins = (t) => Watch.inspect(t, T).map((p) => p.id);
-ok('html/markdown clean', ins('Reply <b>b</b> <i>i</i> <div><span>x</span></div>').length === 0, JSON.stringify(ins('<b>b</b>')));
-ok('self-closing clean', ins('a<br/>b <img src="x"/>').length === 0);
-ok('balanced omega tag clean', ins('<LustScore>72</LustScore>').length === 0);
-ok('unpaired omega tag flagged', ins('<LustScore>72 text').includes('blockUnclosed'));
-ok('leftover parsed block flagged', ins('<planning>x</planning> hi').includes('thinkNotParsed'));
+console.log('RUNTIME 8b) clickable choices require their extension');
+const omegaClickable = omega.prompts.find((prompt) => /Next Scenario Suggestion/.test(prompt.name || ''));
+const omegaReadmePrompt = omega.prompts.find((prompt) => /อ่านก่อนใช้งาน/.test(prompt.name || ''));
+ok('detects the real Omega clickable option but not its read-me prompt',
+    Features.needsClickableInputs([{ prompts: [omegaClickable] }])
+    && !Features.needsClickableInputs([{ prompts: [omegaReadmePrompt] }]));
+const clickablePack = {
+    def: { title: 'Next Scenario Suggestion' },
+    prompts: [{ identifier: 'clickable-choice', enabled: false,
+        content: 'Use st-clickable-inputs and emit <button>Choice</button>' }],
+    state: 'off', promptOn: 0, controlledOn: 0, controlledTotal: 1,
+};
+let dependencyError = null;
+try { await Features.setPack(clickablePack, true, { reload: false, quiet: true }); }
+catch (error) { dependencyError = error; }
+ok('missing extension blocks enable and preserves OFF state',
+    dependencyError?.code === 'OH_EXTENSION_REQUIRED'
+    && !clickablePack.prompts[0].enabled && clickablePack.state === 'off');
+globalThis.__CLICKABLE_EXT__ = { name: 'third-party/st-clickable-inputs', enabled: false };
+dependencyError = null;
+try { await Features.setPack(clickablePack, true, { reload: false, quiet: true }); }
+catch (error) { dependencyError = error; }
+ok('installed but disabled extension is still blocked', dependencyError?.code === 'OH_EXTENSION_REQUIRED');
+globalThis.__CLICKABLE_EXT__ = { name: 'third-party/st-clickable-inputs', enabled: true };
+await Features.setPack(clickablePack, true, { reload: false, quiet: true });
+ok('installed and enabled extension allows the prompt',
+    clickablePack.prompts[0].enabled && clickablePack.state === 'on');
+
+console.log('RUNTIME 9) planning priority follows the enabled preset engine');
+const priorityStages = Watch.priorityStages([
+    { enabled: true, name: 'Aether', content: `<planning>
+//-- STAGE 1 [ANCHOR · strong-attn]: ENTITY LOCK --//
+//-- STAGE 5 [AMBIENT · gated, weak-attn tolerant]: PULSE --//
+//-- STAGE 10 [DECISION · freshest, strongest pull]: NPC SIMULATION --//` },
+    { enabled: false, name: 'Luna', content: '<planning>\n//-- STAGE 9 [DECISION · strongest pull]: POLISH --//' },
+]);
+ok('priority metadata parsed from enabled engine',
+    priorityStages.map((s) => `${s.priority}:${s.number}`).join(',') === 'strong:1,weak:5,strongest:10');
+ok('missing parsed planning is flagged', Watch.inspectPlanning('', priorityStages)[0]?.id === 'planningMissing');
+ok('missing strongest stage is flagged', Watch.inspectPlanning('STAGE 1 done', priorityStages)[0]?.id === 'strongestStageMissing');
+ok('strongest stage present passes', Watch.inspectPlanning('S1 anchor\nS10 decision', priorityStages).length === 0);
+const currentOmegaStages = Watch.priorityStages(omega.prompts.map((prompt) => ({
+    ...prompt,
+    enabled: /Aether|Luna|Helios|Aphrodite|Pantheon/.test(prompt.name || ''),
+})));
+ok('current Omega 3.0 priority map stays readable',
+    currentOmegaStages.filter((s) => s.priority === 'strongest').map((s) => s.number).join(',') === '10,10,8,4,4');
 
 console.log('RUNTIME 10) preset version parsing and comparison');
 ok('parses Omega name before its date',
-    JSON.stringify(PatchNotice.parseVersion('Gemini Omega 2.4.2 (7-6-26)')) === '[2,4,2]');
+    JSON.stringify(PatchNotice.parseVersion('Gemini Omega 2.6 (15-8-26)')) === '[2,6,0]');
 ok('parses two-part JB version', JSON.stringify(PatchNotice.parseVersion('Custom JB v3.1')) === '[3,1,0]');
 ok('newer version compares above latest', PatchNotice.compare([3, 0, 0], [2, 4, 2]) > 0);
 ok('same version compares equal', PatchNotice.compare([2, 4, 2], [2, 4, 2]) === 0);
@@ -371,10 +528,10 @@ console.log('RUNTIME 11) healthy patch state stays quiet');
 let patchPopups = 0;
 const realPatchShow = PatchNotice.show;
 PatchNotice.show = () => { patchPopups += 1; return {}; };
-presetName = 'Gemini Omega 2.4.2';
+presetName = 'Gemini Omega 2.6';
 const healthyPatch = await PatchNotice.check();
 ok('latest preset does not open a popup', patchPopups === 0 && healthyPatch.relation === 0);
-presetName = 'Gemini Omega 2.4.1';
+presetName = 'Gemini Omega 2.5';
 await PatchNotice.check();
 ok('outdated preset opens one warning', patchPopups === 1);
 presetName = 'Custom JB 1.0';
